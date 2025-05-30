@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eagleapi"
+version = "0.1.0"
+description = "A modern Python web framework built on FastAPI"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "David Iyke", email = "davidiyke04@gmail.com"},
+]
+dependencies = [
+    "fastapi>=0.68.0",
+    "uvicorn[standard]>=0.15.0",
+    "sqlalchemy>=1.4.0",
+    "alembic>=1.7.0",
+    "pydantic>=1.8.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "python-multipart>=0.0.5",
+    "typer>=0.4.0",
+    "rich>=10.0.0",
+    "httpx>=0.19.0",
+    "pytest>=6.0.0",
+    "pytest-asyncio>=0.15.0",
+    "pytest-cov>=2.0.0",
+    "aiosqlite>=0.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=21.0",
+    "isort>=5.0.0",
+    "mypy>=0.910",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = "-v --cov=eagle --cov-report=term-missing"
+
+[project.scripts]
+eagle = "eagle.cli.main:app"
