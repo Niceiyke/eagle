@@ -14,7 +14,7 @@
 {% block content %}
 <div class="bg-white shadow overflow-hidden sm:rounded-lg">
     <div class="px-4 py-5 sm:p-6">
-        <form method="POST" action="{{ request.url.path.endswith('/edit') and request.url.path.replace('/edit', '/update') or request.url.path + '/create' }}" class="space-y-6">
+        <form method="POST" action="{{ admin_path }}/{{ model_name }}{% if item %}/{{ item.id }}/update{% else %}/create{% endif %}" class="space-y-6">
             {% for field in fields %}
             {% if not field.primary_key %}
             <div class="mb-4">
