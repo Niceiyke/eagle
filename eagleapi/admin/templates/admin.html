@@ -1,61 +1,50 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ title }}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdn.jsdelivr.net/npm/@heroicons/react/outline" rel="stylesheet">
-</head>
-<body class="bg-gray-100">
-    <div id="root" class="min-h-screen">
-        <!-- Navbar -->
-        <nav class="bg-white shadow-sm">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="flex justify-between h-16">
-                    <div class="flex">
-                        <div class="flex-shrink-0 flex items-center">
-                            <span class="text-xl font-bold text-indigo-600">Eagle Admin</span>
-                        </div>
-                    </div>
-                    <div class="hidden sm:ml-6 sm:flex sm:items-center">
-                        <button class="p-1 rounded-full text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                            <span class="sr-only">View notifications</span>
-                            <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                            </svg>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </nav>
+{% extends "base.html" %}
 
-        <!-- Main content -->
-        <div class="py-10">
-            <header>
-                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <h1 class="text-3xl font-bold text-gray-900">Dashboard</h1>
-                </div>
-            </header>
-            <main>
-                <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
-                    <div class="px-4 py-8 sm:px-0">
-                        <div class="border-2 border-dashed border-gray-200 rounded-lg p-8 text-center">
-                            <h3 class="text-lg font-medium text-gray-900">Eagle Admin Dashboard</h3>
-                            <p class="mt-1 text-sm text-gray-500">This is a placeholder for the admin dashboard.</p>
-                            <p class="mt-2 text-sm text-gray-500">
-                                The React frontend will be served from here in production.
-                            </p>
-                            <div class="mt-6">
-                                <a href="/admin/api/docs" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                                    View API Documentation
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </main>
+{% block title %}{{ title }}{% endblock %}
+
+{% block header %}
+<div class="flex justify-between items-center">
+    <div>
+        <h1 class="text-3xl font-bold text-gray-900">{{ title }}</h1>
+        <p class="mt-1 text-sm text-gray-500">Manage your application data</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+    {% for model in models %}
+    <div class="bg-white overflow-hidden shadow rounded-lg">
+        <div class="px-4 py-5 sm:p-6 flex items-center justify-between">
+            <div>
+                <h3 class="text-lg leading-6 font-medium text-gray-900">
+                    {{ model.name }}
+                </h3>
+                <p class="mt-2 text-sm text-gray-500">
+                    Table: {{ model.table_name }}
+                </p>
+                <p class="mt-1 text-xs text-gray-400">
+                    {{ model.fields|length }} fields
+                </p>
+            </div>
+            <div class="ml-5 flex-shrink-0">
+                <a href="{{ admin_path }}/{{ model.name }}" 
+                   class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    <i class="fas fa-table mr-2"></i> Manage
+                </a>
+            </div>
         </div>
     </div>
-</body>
-</html>
+    {% else %}
+    <div class="col-span-3 text-center py-12">
+        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        <h3 class="mt-2 text-sm font-medium text-gray-900">No models found</h3>
+        <p class="mt-1 text-sm text-gray-500">
+            No database models have been registered with the admin interface.
+        </p>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

@@ -31,6 +31,8 @@ class EagleAPI(FastAPI):
         # Set up logger
         self.logger = logging.getLogger(__name__)
         self._setup()
+        self.add_event_handler("startup", self.on_startup)
+        self.add_event_handler("shutdown", self.on_shutdown)
     
     def _setup(self):
         """Set up the application with middleware and routes."""
@@ -78,10 +80,6 @@ class EagleAPI(FastAPI):
         # Note: This won't remove already mounted routes, but will prevent new ones
         self._admin = None
         
-        # Add startup and shutdown event handlers
-        self.add_event_handler("startup", self.on_startup)
-        self.add_event_handler("shutdown", self.on_shutdown)
-    
     async def on_startup(self):
         """Handle application startup."""
         self.logger.info("Starting up Eagle application...")
@@ -226,7 +224,7 @@ app = create_app()
 # Export common FastAPI components for easier access
 from fastapi import (  # noqa
     Depends, FastAPI, HTTPException, status, Request, Response, 
-    WebSocket, WebSocketDisconnect, APIRouter, BackgroundTasks, 
+    APIRouter, BackgroundTasks, 
     UploadFile, File, Form, Query, Path, Body, Header, Cookie
 )
 from fastapi.security import OAuth2PasswordBearer  # noqa
