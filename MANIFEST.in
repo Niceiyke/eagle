@@ -1,0 +1,2 @@
+recursive-include eagleapi/admin/templates *
+recursive-include eagleapi/admin/static *

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import StaticPool
 
 from eagleapi import create_app
-from eagleapi.db import Base, get_db, init_models
+from eagleapi.db import Base, get_db
 from eagleapi.core.config import settings
 
 # Set test environment variables

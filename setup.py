@@ -19,7 +19,14 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/niceiyke/eagle",
-    packages=find_packages(),
+    packages=find_packages(include=['eagleapi', 'eagleapi.*']),
+    package_data={
+        'eagleapi': [
+            'admin/templates/*',
+            'admin/static/*',
+        ],
+    },
+    include_package_data=True,
     classifiers=[
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",

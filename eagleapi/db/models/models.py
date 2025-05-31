@@ -2,16 +2,17 @@
 Database models for the Eagle Framework.
 """
 from sqlalchemy import Column, String, Boolean, DateTime, select
+from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
+
+from eagleapi.db import BaseModel
+from eagleapi.core.password import get_password_hash, verify_password
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import Base, BaseModel
-from ..services.auth import verify_password, get_password_hash
-
-class User(BaseModel, Base):
+class User(BaseModel):
     """User model for authentication and authorization."""
     __tablename__ = "users"
     
@@ -50,5 +51,5 @@ class User(BaseModel, Base):
     
     async def update_last_login(self, db: 'AsyncSession') -> None:
         """Update the user's last login timestamp."""
-        self.last_login = datetime.utcnow()
+        self.last_login = datetime.now()
         await self.save(db)

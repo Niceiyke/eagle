@@ -19,57 +19,6 @@ logger = logging.getLogger("eagle")
 # Type variables
 T = TypeVar('T')
 
-
-class EagleAPI(FastAPI):
-    """Main application class for the Eagle framework."""
-    
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._extensions: Dict[str, Any] = {}
-        self._config: Dict[str, Any] = {}
-        self._startup_tasks: List[Callable[[], Coroutine[Any, Any, None]]] = []
-        self._shutdown_tasks: List[Callable[[], Coroutine[Any, Any, None]]] = []
-    
-    def add_extension(self, name: str, extension: Any) -> None:
-        """Register an extension with the application."""
-        self._extensions[name] = extension
-        logger.info(f"Added extension: {name}")
-    
-    def get_extension(self, name: str) -> Any:
-        """Get a registered extension by name."""
-        return self._extensions.get(name)
-    
-    def configure(self, **config: Any) -> None:
-        """Update application configuration."""
-        self._config.update(config)
-        logger.info(f"Updated configuration: {', '.join(config.keys())}")
-    
-    @property
-    def config(self) -> Dict[str, Any]:
-        """Get the current configuration."""
-        return self._config
-    
-    def on_startup(self, func: Callable[[], Coroutine[Any, Any, None]]) -> None:
-        """Register a function to run on application startup."""
-        self._startup_tasks.append(func)
-    
-    def on_shutdown(self, func: Callable[[], Coroutine[Any, Any, None]]) -> None:
-        """Register a function to run on application shutdown."""
-        self._shutdown_tasks.append(func)
-    
-    async def _run_startup_tasks(self) -> None:
-        """Run all registered startup tasks."""
-        if self._startup_tasks:
-            logger.info("Running startup tasks...")
-            await asyncio.gather(*(task() for task in self._startup_tasks))
-    
-    async def _run_shutdown_tasks(self) -> None:
-        """Run all registered shutdown tasks."""
-        if self._shutdown_tasks:
-            logger.info("Running shutdown tasks...")
-            await asyncio.gather(*(task() for task in self._shutdown_tasks))
-
-
 class APIVersioningMiddleware(BaseHTTPMiddleware):
     """Middleware for API versioning support."""
     
@@ -176,8 +125,9 @@ def is_async_callable(obj: Any) -> bool:
     return False
 
 
+from .security import verify_password, get_password_hash
 # Export public API
 __all__ = [
     'Eagle', 'APIVersioningMiddleware', 'Route', 'Pagination',
-    'get_dependency_return_annotation', 'is_async_callable'
+    'get_dependency_return_annotation', 'is_async_callable', 'verify_password', 'get_password_hash'
 ]

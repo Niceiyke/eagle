@@ -12,8 +12,14 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+# Import database commands
+from . import db as db_commands
+
 app = typer.Typer(help="Eagle Framework CLI")
 console = Console()
+
+# Register database commands
+app.add_typer(db_commands.db_cli, name="db", help="Database operations")
 
 # Create a new Eagle project
 @app.command()
@@ -46,7 +52,6 @@ def new(name: str) -> None:
         (project_dir / "app" / "static").mkdir()
         (project_dir / "app" / "templates").mkdir()
         (project_dir / "tests").mkdir()
-        (project_dir / "alembic").mkdir()
         
         # Create basic files
         gitignore_content = """# Python
@@ -140,42 +145,6 @@ coverage.xml
     console.print("  cp .env.example .env")
     console.print("  python -m uvicorn app.main:app --reload\n")
     console.print("Then open http://localhost:8000 in your browser.")
-
-
-# Database commands
-db = typer.Typer(help="Database operations")
-app.add_typer(db, name="db")
-
-
-@db.command()
-def create():
-    """Create database tables."""
-    from ..db import db as database
-    import asyncio
-    
-    async def _create_tables():
-        await database.create_all()
-    
-    with console.status("Creating database tables..."):
-        asyncio.run(_create_tables())
-    console.print("[green]✓ Database tables created successfully[/green]")
-
-
-@db.command()
-def drop():
-    """Drop all database tables."""
-    from ..db import db as database
-    import asyncio
-    
-    if typer.confirm("Are you sure you want to drop all database tables?"):
-        async def _drop_tables():
-            await database.drop_all()
-        
-        with console.status("Dropping database tables..."):
-            asyncio.run(_drop_tables())
-        console.print("[green]✓ Database tables dropped successfully[/green]")
-    else:
-        console.print("Operation cancelled.")
 
 
 # Run the development server

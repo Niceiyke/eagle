@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from ..core import security
 from ..core.config import settings
-from ..db.user_model import User
+from ..db.models.models import User
 from ..schemas.user import UserCreate
 
 async def get_user(db: AsyncSession, user_id: int) -> Optional[User]:
