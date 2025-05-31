@@ -3,7 +3,7 @@ Eagle Admin Dashboard
 
 This module provides an automatic admin interface for Eagle API applications.
 """
-from typing import Optional, Type, Dict, Any, List, TypeVar
+from typing import Optional, Type, Dict, Any, List, TypeVar, Callable
 from fastapi import Request, Depends, HTTPException, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -17,9 +17,38 @@ import os
 import importlib
 import inspect as py_inspect
 from typing import Any, Dict, List, Optional, Type, TypeVar
+from functools import wraps
 
 # Type variable for model types
 ModelType = TypeVar('ModelType')
+
+def register_model_to_admin(cls=None, *, name: str = None):
+    """
+    Decorator to register a model with the admin interface.
+    
+    Args:
+        name (str, optional): Custom name for the model in the admin interface. 
+                           If not provided, the class name will be used.
+                           
+    Example:
+        @register_model_to_admin 
+        class MyModel(Base):
+            __tablename__ = 'my_models'
+            
+        # Or with custom name:
+        @register_model_to_admin (name='CustomModelName')
+        class AnotherModel(Base):
+            __tablename__ = 'another_models'
+    """
+    def wrap(cls):
+        ModelRegistry.register(cls, name=name)
+        return cls
+    
+    # Handle both @register_model_to_admin  and @register_model_to_admin () syntax
+    if cls is None:
+        return wrap
+    return wrap(cls)
+
 
 class ModelInfo(PydanticBaseModel):
     name: str
@@ -36,9 +65,17 @@ class ModelRegistry:
         return cls._instance
     
     @classmethod
-    def register(cls, model: Type[ModelType]) -> None:
-        """Register a model with the admin interface."""
-        cls._models[model.__name__] = model
+    def register(cls, model: Type[ModelType], name: str = None) -> None:
+        """
+        Register a model with the admin interface.
+        
+        Args:
+            model: The SQLAlchemy model class to register
+            name: Optional custom name for the model in the admin interface.
+                 If not provided, the class name will be used.
+        """
+        model_name = name or model.__name__
+        cls._models[model_name] = model
     
     @classmethod
     def get_models(cls) -> Dict[str, Type[ModelType]]:

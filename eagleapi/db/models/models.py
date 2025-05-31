@@ -8,13 +8,15 @@ from typing import Optional, TYPE_CHECKING
 
 from eagleapi.db import BaseModel
 from eagleapi.core.password import get_password_hash, verify_password
+from eagleapi.admin import register_model_to_admin
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-class User(BaseModel):
+@register_model_to_admin(name="AdminUser")
+class AdminUser(BaseModel):
     """User model for authentication and authorization."""
-    __tablename__ = "users"
+    __tablename__ = "AdminUsers"
     
     email = Column(String(100), unique=True, index=True, nullable=False)
     username = Column(String(50), unique=True, index=True, nullable=False)
@@ -25,7 +27,7 @@ class User(BaseModel):
     last_login = Column(DateTime, nullable=True)
     
     def __repr__(self) -> str:
-        return f"<User {self.username}>"
+        return f"<AdminUser {self.username}>"
     
     @classmethod
     async def get_by_username(cls, db: 'AsyncSession', username: str) -> Optional['User']:
