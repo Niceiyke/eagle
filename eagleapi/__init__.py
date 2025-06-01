@@ -18,6 +18,7 @@ import logging
 from pathlib import Path
 from eagleapi.db import db
 from .core.config import settings
+from .middleware.logging import LoggingMiddleware
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -167,6 +168,8 @@ def create_app(
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+        app.add_middleware(LoggingMiddleware)
         
         # Import and include API routers
         try:

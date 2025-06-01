@@ -14,7 +14,7 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 
 from ..core.config import settings
 from ..core.password import verify_password, get_password_hash
-from ..db.models.models import User
+from ..db.models.models import AdminUser
 from ..schemas.token import TokenData
 
 # OAuth2 scheme for token authentication
@@ -39,7 +39,7 @@ def set_db_session_getter(getter: Callable[[], Awaitable[AsyncSession]]) -> None
     global _get_db_session
     _get_db_session = getter
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> AdminUser:
     """Get the current user from a JWT token."""
     if _get_db_session is None:
         raise RuntimeError("Database session getter not set. Call set_db_session_getter first.")
@@ -63,7 +63,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     db = await _get_db_session()
     try:
         from sqlalchemy import select
-        result = await db.execute(select(User).where(User.email == token_data.email))
+        result = await db.execute(select(AdminUser).where(AdminUser.email == token_data.email))
         user = result.scalar_one_or_none()
         
         if user is None:
@@ -73,8 +73,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         await db.close()
 
 async def get_current_active_user(
-    current_user: User = Depends(get_current_user),
-) -> User:
+    current_user: AdminUser = Depends(get_current_user),
+) -> AdminUser:
     """Get the current active user."""
     if not current_user.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")

@@ -18,6 +18,13 @@ import importlib
 import inspect as py_inspect
 from typing import Any, Dict, List, Optional, Type, TypeVar
 from functools import wraps
+from enum import Enum
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 # Type variable for model types
 ModelType = TypeVar('ModelType')
@@ -50,14 +57,115 @@ def register_model_to_admin(cls=None, *, name: str = None):
     return wrap(cls)
 
 
+class FilterType(str, Enum):
+    """Enum for different types of filters."""
+    TEXT = "text"
+    NUMBER = "number"
+    DATE = "date"
+    BOOLEAN = "boolean"
+    SELECT = "select"
+    MULTIPLE_SELECT = "multiple_select"
+
+class FieldFilter(PydanticBaseModel):
+    """Model for field filters."""
+    name: str
+    label: str
+    type: FilterType
+    options: Optional[List[str]] = None
+    default_value: Optional[str] = None
+
 class ModelInfo(PydanticBaseModel):
+    """Model information with filter definitions."""
     name: str
     table_name: str
     fields: List[Dict[str, Any]]
+    filters: List[FieldFilter]
+
+    def get_filter_by_name(self, field_name: str) -> Optional[FieldFilter]:
+        """Get filter for a specific field by name."""
+        return next((f for f in self.filters if f.name == field_name), None)
+
+    @classmethod
+    def from_model(cls, model: Type[ModelType]) -> 'ModelInfo':
+        """Create ModelInfo from a SQLAlchemy model."""
+        mapper = inspect(model)
+        fields = []
+        filters = []
+        
+        for column in mapper.columns:
+            field_info = {
+                "name": column.name,
+                "type": str(column.type.__visit_name__).upper() if hasattr(column.type, '__visit_name__') else str(column.type.python_type.__name__).upper(),
+                "nullable": column.nullable,
+                "primary_key": column.primary_key,
+                "default": column.default.arg if column.default else None,
+                "foreign_keys": [
+                    {
+                        "name": fk.name,
+                        "referenced_table": fk.column.table.name,
+                        "referenced_column": fk.column.name
+                    }
+                    for fk in column.foreign_keys
+                ] if column.foreign_keys else None,
+                "unique": column.unique,
+                "index": column.index
+            }
+            fields.append(field_info)
+            
+            # Determine filter type based on column type
+            filter_type = None
+            options = None
+            
+            if column.type.python_type == str:
+                filter_type = FilterType.TEXT
+            elif column.type.python_type in (int, float):
+                filter_type = FilterType.NUMBER
+            elif column.type.python_type == bool:
+                filter_type = FilterType.BOOLEAN
+                options = ["True", "False"]
+            elif hasattr(column.type, 'python_type') and issubclass(column.type.python_type, datetime):
+                filter_type = FilterType.DATE
+            elif column.foreign_keys:
+                filter_type = FilterType.SELECT
+                # Get distinct values for select options
+                async def get_options():
+                    async with get_db() as db:
+                        result = await db.execute(select(column))
+                        return list(set(str(r[0]) for r in result.all()))
+                options = get_options()
+            
+            if filter_type:
+                filters.append(
+                    FieldFilter(
+                        name=column.name,
+                        label=column.info.get('label', column.name.replace('_', ' ').title()),
+                        type=filter_type,
+                        options=options
+                    )
+                )
+                
+        return cls(
+            name=model.__name__,
+            table_name=model.__tablename__,
+            fields=fields,
+            filters=filters
+        )
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def get_filter_by_name(self, name: str) -> Optional[FieldFilter]:
+        """Get filter by field name."""
+        return next((f for f in self.filters if f.name == name), None)
+
+    def get_filters_by_type(self, filter_type: FilterType) -> List[FieldFilter]:
+        """Get all filters of a specific type."""
+        return [f for f in self.filters if f.type == filter_type]
 
 class ModelRegistry:
     _instance = None
     _models: Dict[str, Type[ModelType]] = {}
+    _model_info_cache: Dict[str, ModelInfo] = {}
     
     def __new__(cls):
         if cls._instance is None:
@@ -73,14 +181,25 @@ class ModelRegistry:
             model: The SQLAlchemy model class to register
             name: Optional custom name for the model in the admin interface.
                  If not provided, the class name will be used.
+        
+        Raises:
+            ValueError: If the model is not a valid SQLAlchemy model
+            ValueError: If a model with the same name is already registered
         """
+        if not hasattr(model, '__tablename__'):
+            raise ValueError(f"{model.__name__} is not a valid SQLAlchemy model")
+            
         model_name = name or model.__name__
+        if model_name in cls._models:
+            raise ValueError(f"Model name '{model_name}' is already registered")
+            
         cls._models[model_name] = model
+        cls._model_info_cache.clear()  # Clear cache when models change
     
     @classmethod
     def get_models(cls) -> Dict[str, Type[ModelType]]:
         """Get all registered models."""
-        return cls._models
+        return cls._models.copy()  # Return a copy to prevent modification
     
     @classmethod
     def get_model(cls, model_name: str) -> Optional[Type[ModelType]]:
@@ -90,8 +209,13 @@ class ModelRegistry:
     @classmethod
     def get_model_info(cls, model: Type[ModelType]) -> ModelInfo:
         """Get information about a model's fields."""
+        if not hasattr(model, '__tablename__'):
+            raise ValueError(f"{model.__name__} is not a valid SQLAlchemy model")
+            
+        model_name = model.__name__
         mapper = inspect(model)
         fields = []
+        filters = []
         
         for column in mapper.columns:
             field_info = {
@@ -99,21 +223,77 @@ class ModelRegistry:
                 "type": str(column.type.__visit_name__).upper() if hasattr(column.type, '__visit_name__') else str(column.type.python_type.__name__).upper(),
                 "nullable": column.nullable,
                 "primary_key": column.primary_key,
-                "default": column.default.arg if column.default else None
+                "default": column.default.arg if column.default else None,
+                "foreign_keys": [
+                    {
+                        "name": fk.name,
+                        "referenced_table": fk.column.table.name,
+                        "referenced_column": fk.column.name
+                    }
+                    for fk in column.foreign_keys
+                ] if column.foreign_keys else None,
+                "unique": column.unique,
+                "index": column.index
             }
             fields.append(field_info)
             
-        return ModelInfo(
+            # Determine filter type based on column type
+            filter_type = None
+            options = None
+            
+            if column.type.python_type == str:
+                filter_type = FilterType.TEXT
+            elif column.type.python_type in (int, float):
+                filter_type = FilterType.NUMBER
+            elif column.type.python_type == bool:
+                filter_type = FilterType.BOOLEAN
+                options = ["True", "False"]
+            elif hasattr(column.type, 'python_type') and issubclass(column.type.python_type, datetime):
+                filter_type = FilterType.DATE
+            elif column.foreign_keys:
+                filter_type = FilterType.SELECT
+                # Get distinct values for select options
+                async def get_options():
+                    async with get_db() as db:
+                        result = await db.execute(select(column))
+                        return list(set(str(r[0]) for r in result.all()))
+                options = get_options()
+            
+            if filter_type:
+                filters.append(
+                    FieldFilter(
+                        name=column.name,
+                        label=column.info.get('label', column.name.replace('_', ' ').title()),
+                        type=filter_type,
+                        options=options
+                    )
+                )
+                
+        model_info = ModelInfo(
             name=model.__name__,
             table_name=model.__tablename__,
-            fields=fields
+            fields=fields,
+            filters=filters
         )
+        cls._model_info_cache[model.__name__] = model_info
+        return model_info
     
     @classmethod
     def scan_models(cls, models_module: str) -> None:
-        """Scan a module for SQLAlchemy models and register them."""
+        """
+        Scan a module for SQLAlchemy models and register them.
+        
+        Args:
+            models_module: Dot path to the module containing models
+            
+        Raises:
+            ImportError: If the module cannot be imported
+            ValueError: If no models are found in the module
+        """
         try:
             module = importlib.import_module(models_module)
+            models_found = False
+            
             for name, obj in py_inspect.getmembers(module):
                 if (
                     py_inspect.isclass(obj) 
@@ -121,8 +301,34 @@ class ModelRegistry:
                     and obj.__module__ == models_module
                 ):
                     cls.register(obj)
+                    models_found = True
+            
+            if not models_found:
+                raise ValueError(f"No SQLAlchemy models found in module '{models_module}'")
+                
         except ImportError as e:
-            print(f"Error scanning models: {e}")
+            raise ImportError(f"Error importing module '{models_module}': {str(e)}") from e
+        except ValueError as e:
+            raise ValueError(f"Error scanning models in '{models_module}': {str(e)}") from e
+        except Exception as e:
+            raise Exception(f"Unexpected error scanning models: {str(e)}") from e
+    
+    @classmethod
+    def unregister(cls, model_name: str) -> None:
+        """
+        Unregister a model from the admin interface.
+        
+        Args:
+            model_name: Name of the model to unregister
+            
+        Raises:
+            KeyError: If the model is not registered
+        """
+        if model_name not in cls._models:
+            raise KeyError(f"Model '{model_name}' is not registered")
+            
+        del cls._models[model_name]
+        cls._model_info_cache.clear()  # Clear cache when models change
 
 # Create a singleton instance
 model_registry = ModelRegistry()
@@ -164,11 +370,7 @@ class Admin:
         
         # Add admin routes to the main app
         self._add_routes()
-        
-        # Import and include API routes
-        from . import api
-        self.app.include_router(api.router, prefix=f"{self.path}/api")
-        
+               
         # Mount static files
         self.app.mount(
             f"{self.path}/static",
@@ -224,6 +426,7 @@ class Admin:
                     "model_name": model_name,
                     "items": items,
                     "fields": [field['name'] for field in model_info.fields],
+                    "model_info": model_info,
                     "admin_path": self.path
                 }
             )
@@ -246,6 +449,7 @@ class Admin:
                     "title": f"New {model_name}",
                     "model_name": model_name,
                     "fields": model_info.fields,
+                    "model_info": model_info,
                     "admin_path": self.path
                 }
             )

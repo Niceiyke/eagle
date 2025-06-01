@@ -21,33 +21,70 @@
                 <label for="{{ field.name }}" class="block text-sm font-medium text-gray-700">
                     {{ field.name|title }}
                     {% if not field.nullable %}<span class="text-red-500">*</span>{% endif %}
+                    {% if field.help_text %}
+                    <i class="fas fa-info-circle text-blue-500 ml-2 cursor-pointer" 
+                       data-tooltip="{{ field.help_text }}"></i>
+                    {% endif %}
                 </label>
-                {% if field.type in ['str', 'String'] %}
-                    <input type="text" name="{{ field.name }}" id="{{ field.name }}" 
-                           value="{{ item[field.name] if item else '' }}" 
-                           class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                           {% if not field.nullable %}required{% endif %}>
-                {% elif field.type in ['int', 'Integer'] %}
-                    <input type="number" name="{{ field.name }}" id="{{ field.name }}" 
-                           value="{{ item[field.name] if item else '' }}" 
-                           class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                           {% if not field.nullable %}required{% endif %}>
-                {% elif field.type in ['bool', 'Boolean'] %}
-                    <div class="mt-2">
-                        <input type="checkbox" name="{{ field.name }}" id="{{ field.name }}" 
-                               class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                               {% if item and item[field.name] %}checked{% endif %}>
-                    </div>
-                {% elif field.type in ['datetime', 'DateTime'] %}
-                    <input type="datetime-local" name="{{ field.name }}" id="{{ field.name }}" 
-                           value="{{ item[field.name].strftime('%Y-%m-%dT%H:%M') if item and item[field.name] else '' }}" 
-                           class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                           {% if not field.nullable %}required{% endif %}>
+                
+                {% set filter = model_info.get_filter_by_name(field.name) %}
+                {% if filter %}
+                    {% if filter.type == 'text' %}
+                        <input type="text" name="{{ field.name }}" id="{{ field.name }}" 
+                               value="{{ item[field.name] if item else '' }}" 
+                               class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                               {% if not field.nullable %}required{% endif %}
+                               {% if field.max_length %}maxlength="{{ field.max_length }}"{% endif %}
+                               {% if field.placeholder %}placeholder="{{ field.placeholder }}"{% endif %}>
+                    {% elif filter.type == 'number' %}
+                        <input type="number" name="{{ field.name }}" id="{{ field.name }}" 
+                               value="{{ item[field.name] if item else '' }}" 
+                               class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                               {% if not field.nullable %}required{% endif %}
+                               {% if field.min_value %}min="{{ field.min_value }}"{% endif %}
+                               {% if field.max_value %}max="{{ field.max_value }}"{% endif %}
+                               {% if field.placeholder %}placeholder="{{ field.placeholder }}"{% endif %}>
+                    {% elif filter.type == 'date' %}
+                        <input type="date" name="{{ field.name }}" id="{{ field.name }}" 
+                               value="{{ item[field.name].strftime('%Y-%m-%d') if item and item[field.name] else '' }}" 
+                               class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                               {% if not field.nullable %}required{% endif %}>
+                    {% elif filter.type == 'boolean' %}
+                        <div class="mt-2">
+                            <input type="checkbox" name="{{ field.name }}" id="{{ field.name }}" 
+                                   class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                   {% if item and item[field.name] %}checked{% endif %}>
+                        </div>
+                    {% elif filter.type == 'select' %}
+                        <select name="{{ field.name }}" id="{{ field.name }}" 
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                {% if not field.nullable %}required{% endif %}>
+                            {% if not field.nullable %}
+                                <option value="">Select {{ field.name|title }}</option>
+                            {% endif %}
+                            {% for option in filter.options %}
+                                <option value="{{ option }}" {% if item and str(item[field.name]) == option %}selected{% endif %}>
+                                    {{ option }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    {% else %}
+                        <input type="text" name="{{ field.name }}" id="{{ field.name }}" 
+                               value="{{ item[field.name] if item else '' }}" 
+                               class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                               {% if not field.nullable %}required{% endif %}
+                               {% if field.placeholder %}placeholder="{{ field.placeholder }}"{% endif %}>
+                    {% endif %}
                 {% else %}
                     <input type="text" name="{{ field.name }}" id="{{ field.name }}" 
                            value="{{ item[field.name] if item else '' }}" 
                            class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                           {% if not field.nullable %}required{% endif %}>
+                           {% if not field.nullable %}required{% endif %}
+                           {% if field.placeholder %}placeholder="{{ field.placeholder }}"{% endif %}>
+                {% endif %}
+                
+                {% if field.error %}
+                <p class="mt-1 text-sm text-red-600">{{ field.error }}</p>
                 {% endif %}
             </div>
             {% endif %}
@@ -76,6 +113,35 @@
                     checkbox.value = 'off';
                 }
             });
+        });
+    });
+
+    // Tooltip functionality for help text
+    document.querySelectorAll('[data-tooltip]').forEach(el => {
+        el.addEventListener('mouseenter', function() {
+            const tooltip = document.createElement('div');
+            tooltip.className = 'absolute bg-gray-800 text-white px-2 py-1 rounded text-sm z-50';
+            tooltip.textContent = this.getAttribute('data-tooltip');
+            this.appendChild(tooltip);
+        });
+
+        el.addEventListener('mouseleave', function() {
+            const tooltip = this.querySelector('div');
+            if (tooltip) tooltip.remove();
+        });
+    });
+
+    // JSON field validation
+    document.querySelectorAll('textarea[data-type="json"]').forEach(textarea => {
+        textarea.addEventListener('input', function() {
+            try {
+                JSON.parse(this.value);
+                this.classList.remove('border-red-500');
+                this.classList.add('border-green-500');
+            } catch (e) {
+                this.classList.remove('border-green-500');
+                this.classList.add('border-red-500');
+            }
         });
     });
 </script>
