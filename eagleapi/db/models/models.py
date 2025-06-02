@@ -2,7 +2,6 @@
 Database models for the Eagle Framework.
 """
 from sqlalchemy import Column, String, Boolean, DateTime, select, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING, List, Dict, Any
 from pydantic import BaseModel as PydanticBaseModel
@@ -10,6 +9,7 @@ from pydantic import BaseModel as PydanticBaseModel
 from eagleapi.db import BaseModel
 from eagleapi.core.password import get_password_hash, verify_password
 from eagleapi.admin import register_model_to_admin
+
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

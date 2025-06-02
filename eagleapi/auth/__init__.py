@@ -1,3 +1,4 @@
+#auth __init__.py
 """
 Authentication and authorization module for Eagle Framework.
 
@@ -14,7 +15,6 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import db,get_db
-from .. import app
 from ..services.auth import get_user_by_email,get_user_by_username,authenticate_user,create_user
 from ..schemas.user import UserCreate
 from ..core import security
@@ -169,32 +169,10 @@ async def get_current_active_user(
 
 
 # Authentication routers
-from eagleapi import APIRouter
+from fastapi import APIRouter
 
 router = APIRouter(tags=["auth"])
 
-
-@router.post("/token", response_model=Token)
-async def login_for_access_token(
-    form_data: OAuth2PasswordRequestForm = Depends()
-):
-    """OAuth2 compatible token login."""
-    # In a real app, you would validate the username and password against your database
-    # user = await authenticate_user(db, form_data.username, form_data.password)
-    # if not user:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_401_UNAUTHORIZED,
-    #         detail="Incorrect username or password",
-    #         headers={"WWW-Authenticate": "Bearer"},
-    #     )
-    
-    # For now, accept any username/password
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": form_data.username, "scopes": form_data.scopes},
-        expires_delta=access_token_expires,
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
 
 
 

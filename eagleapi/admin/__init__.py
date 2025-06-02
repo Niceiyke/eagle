@@ -1,3 +1,4 @@
+#admin __init__.py
 """
 Eagle Admin Dashboard
 

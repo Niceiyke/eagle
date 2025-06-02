@@ -8,25 +8,25 @@ from sqlalchemy import select
 
 from ..core import security
 from ..core.config import settings
-from ..db.models.models import User
+from ..db.models.models import AdminUser
 from ..schemas.user import UserCreate
 
-async def get_user(db: AsyncSession, user_id: int) -> Optional[User]:
+async def get_user(db: AsyncSession, user_id: int) -> Optional[AdminUser]:
     """Get a user by ID."""
-    result = await db.execute(select(User).filter(User.id == user_id))
+    result = await db.execute(select(AdminUser).filter(AdminUser.id == user_id))
     return result.scalar_one_or_none()
 
-async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
+async def get_user_by_email(db: AsyncSession, email: str) -> Optional[AdminUser]:
     """Get a user by email."""
-    result = await db.execute(select(User).filter(User.email == email))
+    result = await db.execute(select(AdminUser).filter(AdminUser.email == email))
     return result.scalar_one_or_none()
 
-async def get_user_by_username(db: AsyncSession, username: str) -> Optional[User]:
+async def get_user_by_username(db: AsyncSession, username: str) -> Optional[AdminUser]:
     """Get a user by username."""
-    result = await db.execute(select(User).filter(User.username == username))
+    result = await db.execute(select(AdminUser).filter(AdminUser.username == username))
     return result.scalar_one_or_none()
 
-async def authenticate_user(db: AsyncSession, email: str, password: str) -> Optional[User]:
+async def authenticate_user(db: AsyncSession, email: str, password: str) -> Optional[AdminUser]:
     """Authenticate a user by email and password."""
     user = await get_user_by_email(db, email)
     if not user:
@@ -35,10 +35,10 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> Opti
         return None
     return user
 
-async def create_user(db: AsyncSession, user_in: UserCreate) -> User:
+async def create_user(db: AsyncSession, user_in: UserCreate) -> AdminUser:
     """Create a new user with hashed password."""
     hashed_password = security.get_password_hash(user_in.password)
-    db_user = User(
+    db_user = AdminUser(
         email=user_in.email,
         username=user_in.username,
         full_name=user_in.full_name,

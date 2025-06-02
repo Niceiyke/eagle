@@ -22,7 +22,7 @@ class Log(BaseModel):
     id = Column(Integer, primary_key=True, index=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     level = Column(Enum(LogLevel))
-    message = Column(String, nullable=False)
+    message = Column(String, nullable=True)
     request_id = Column(String, nullable=True)
     user_id = Column(Integer, nullable=True)
     path = Column(String, nullable=True)
