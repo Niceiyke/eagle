@@ -23,35 +23,89 @@ from .middleware.logging import LoggingMiddleware
 from .cache import setup_eagle_cache, CacheConfig
 from .cache.core import cache_manager
 from .auth import User, get_current_superuser
+from .middleware import MiddlewareManager
 
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+    
+    
 class EagleAPI(FastAPI):
     """Main application class for the Eagle framework."""
     
     def __init__(self, *args, **kwargs):
-        # Extract cache config before passing to parent
+        # Extract middleware config
+        self.middleware_config = kwargs.pop('middleware_config', {})
         self.cache_config = kwargs.pop('cache_config', None)
         super().__init__(*args, **kwargs)
         
-        # Set up logger
         self.logger = logging.getLogger(__name__)
+        self.middleware_manager = MiddlewareManager()
         self._setup()
         self.add_event_handler("startup", self.on_startup)
         self.add_event_handler("shutdown", self.on_shutdown)
     
     def _setup(self):
         """Set up the application with middleware and routes."""
+        # Configure and apply middlewares
+        self._setup_middlewares()
+        
         # Set up caching
         self._setup_cache()
         
-        # Set up admin dashboard if enabled
+        # Set up admin dashboard
         self._admin = None
         if os.getenv("EAGLE_ADMIN_ENABLED", "true").lower() == "true":
             self.enable_admin()
+    
+    def _setup_middlewares(self):
+        """Configure and apply middlewares based on configuration."""
+        config = self.middleware_config
+        
+        # Configure logging middleware
+        logging_config = config.get('logging', {})
+        if logging_config.get('enabled', True):
+            self.middleware_manager.configure_logging(
+                enabled=True,
+                log_methods=logging_config.get('methods', ['POST', 'PUT', 'DELETE']),
+                excluded_paths=logging_config.get('excluded_paths', [
+                    '/health', '/metrics', '/docs', '/redoc', '/openapi.json'
+                ]),
+                log_request_body=logging_config.get('log_request_body', True),
+                log_response_body=logging_config.get('log_response_body', False),
+                max_body_size=logging_config.get('max_body_size', 10 * 1024),
+                batch_logging=logging_config.get('batch_logging', False)
+            )
+        
+        # Configure CORS middleware
+        cors_config = config.get('cors', {})
+        if cors_config.get('enabled', True):
+            self.middleware_manager.configure_cors(
+                enabled=True,
+                allow_origins=cors_config.get('origins', ["*"]),
+                allow_methods=cors_config.get('methods', ["*"]),
+                allow_credentials=cors_config.get('credentials', True)
+            )
+        
+        # Configure rate limiting if enabled
+        rate_limit_config = config.get('rate_limit', {})
+        if rate_limit_config.get('enabled', False):
+            self.middleware_manager.configure_rate_limit(
+                enabled=True,
+                calls=rate_limit_config.get('calls', 100),
+                period=rate_limit_config.get('period', 60)
+            )
+        
+        # Apply all middlewares to the app
+        try:
+            self.middleware_manager.apply_to_app(self)
+            self.logger.info("All middlewares applied successfully")
+        except Exception as e:
+            self.logger.error(f"Error applying middlewares: {e}")
+            raise
     
     def _setup_cache(self):
         """Set up caching system."""
@@ -174,6 +228,8 @@ class EagleAPI(FastAPI):
         # Note: This won't remove already mounted routes, but will prevent new ones
         self._admin = None
 
+
+
 def create_app(
     title: str = "Eagle Framework",
     description: str = "A modern Python web framework built on FastAPI",
@@ -183,6 +239,7 @@ def create_app(
     openapi_url: str = "/openapi.json",
     debug: bool = False,
     cache_config: Optional[Dict[str, Any]] = None,
+    middleware_config: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> EagleAPI:
     """
@@ -216,6 +273,28 @@ def create_app(
             }
         **kwargs: Additional keyword arguments to pass to the FastAPI constructor.
         
+        middleware_config: Middleware configuration dictionary. Example:
+            {
+                "logging": {
+                    "enabled": True,
+                    "methods": ["POST", "PUT", "DELETE"],
+                    "excluded_paths": ["/health", "/metrics"],
+                    "log_request_body": True,
+                    "log_response_body": False,
+                    "batch_logging": False
+                },
+                "cors": {
+                    "enabled": True,
+                    "origins": ["*"],
+                    "methods": ["*"],
+                    "credentials": True
+                },
+                "rate_limit": {
+                    "enabled": False,
+                    "calls": 100,
+                    "period": 60
+                }
+            }
     Returns:
         EagleAPI: The configured Eagle application instance.
     """
@@ -226,6 +305,21 @@ def create_app(
     )
     
     logger = logging.getLogger(__name__)
+
+    # Set default middleware config
+    default_middleware_config = {
+        "logging": {"enabled": True},
+        "cors": {"enabled": True},
+        "rate_limit": {"enabled": False}
+    }
+    
+    if middleware_config:
+        # Merge with defaults
+        for key, value in middleware_config.items():
+            if key in default_middleware_config:
+                default_middleware_config[key].update(value)
+            else:
+                default_middleware_config[key] = value
     
     try:
         logger.info(f"Creating {title} application (version: {version})")
@@ -235,24 +329,11 @@ def create_app(
             title=title,
             description=description,
             version=version,
-            docs_url=docs_url,
-            redoc_url=redoc_url,
-            openapi_url=openapi_url,
             debug=debug,
-            cache_config=cache_config,  # Pass cache config
+            cache_config=cache_config,
+            middleware_config=default_middleware_config,
             **kwargs
-        )
-        
-        # Configure CORS (removed duplicate from _setup)
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=settings.CORS_ORIGINS if hasattr(settings, 'CORS_ORIGINS') else ["*"],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-
-        
+        )       
         # Import and include API routers
         try:
             from .auth import router as auth_router
@@ -317,9 +398,6 @@ def create_app(
     except Exception as e:
         logger.critical(f"Failed to create application: {e}", exc_info=True)
         raise
-
-# Create a default application instance
-app = create_app()
 
 # Export common FastAPI components for easier access
 from fastapi import (  # noqa

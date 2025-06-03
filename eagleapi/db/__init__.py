@@ -406,29 +406,48 @@ class Database:
             return False
     
     async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
-        """Simplified session management with proper cleanup"""
+        """Enhanced session management with proper cleanup and error handling"""
         if not self.session_factory:
             raise ConnectionError("Database session factory not initialized")
         
         session: AsyncSession = self.session_factory()
         try:
-            # Just yield the session and let the route handle transactions
             yield session
-            # Don't commit here - let the route handle it
         except Exception as e:
-            # Rollback on any error
-            if session.in_transaction():
-                await session.rollback()
+            # Only rollback if there's an active transaction
+            try:
+                if session.in_transaction():
+                    await session.rollback()
+            except Exception as rollback_error:
+                self._logger.warning(f"Error during rollback: {rollback_error}")
+            
+            # Re-raise the original exception with proper error handling
             if isinstance(e, IntegrityError):
                 raise ValidationError(f"Data integrity error: {e}") from e
             elif isinstance(e, SQLAlchemyError):
                 raise DatabaseError(f"Database error: {e}") from e
             raise
         finally:
+            # Enhanced session cleanup with proper state checking
             try:
+                # Check if session is still valid before closing
+                if not session.is_active:
+                    return
+                
+                # If there's still an active transaction, make sure it's completed
+                if session.in_transaction():
+                    try:
+                        # Don't auto-commit here - let the caller handle transactions
+                        await session.rollback()
+                    except Exception as tx_error:
+                        self._logger.warning(f"Error rolling back transaction: {tx_error}")
+                
+                # Now safely close the session
                 await session.close()
-            except Exception as e:
-                self._logger.warning(f"Error while closing session: {e}")
+                
+            except Exception as close_error:
+                # Only log as debug since this is cleanup - don't fail the request
+                self._logger.debug(f"Session cleanup warning: {close_error}")
     
     @retry_on_db_error()
     async def create_tables(self) -> None:
