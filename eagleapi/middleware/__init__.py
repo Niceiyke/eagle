@@ -14,6 +14,7 @@ from .auth import AuthMiddleware
 from .cors import CORSMiddleware
 from .rate_limit import RateLimitMiddleware
 from .compression import CompressionMiddleware
+from ..cache.middleware import CacheMiddleware
 
 log.basicConfig(level=log.INFO)
 
@@ -30,6 +31,7 @@ class MiddlewareManager:
             'cors': CORSMiddleware,
             'rate_limit': RateLimitMiddleware,
             'compression': CompressionMiddleware,
+            'cache': CacheMiddleware,
         }
     
     def add_middleware(

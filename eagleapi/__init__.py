@@ -18,10 +18,6 @@ import os
 import logging
 from pathlib import Path
 from .db import db, get_db
-from .core.config import settings
-from .middleware.logging import LoggingMiddleware
-from .cache import setup_eagle_cache, CacheConfig
-from .cache.core import cache_manager
 from .auth import User, get_current_superuser
 from .middleware import MiddlewareManager
 
@@ -39,7 +35,6 @@ class EagleAPI(FastAPI):
     def __init__(self, *args, **kwargs):
         # Extract middleware config
         self.middleware_config = kwargs.pop('middleware_config', {})
-        self.cache_config = kwargs.pop('cache_config', None)
         super().__init__(*args, **kwargs)
         
         self.logger = logging.getLogger(__name__)
@@ -52,9 +47,6 @@ class EagleAPI(FastAPI):
         """Set up the application with middleware and routes."""
         # Configure and apply middlewares
         self._setup_middlewares()
-        
-        # Set up caching
-        self._setup_cache()
         
         # Set up admin dashboard
         self._admin = None
@@ -98,6 +90,20 @@ class EagleAPI(FastAPI):
                 calls=rate_limit_config.get('calls', 100),
                 period=rate_limit_config.get('period', 60)
             )
+            
+        # Configure caching if enabled
+        cache_config = config.get('cache', {})
+        if cache_config.get('enabled', False):
+            self.middleware_manager.add_middleware(
+                'cache',
+                default_ttl=cache_config.get('default_ttl', 300),
+                cache_methods=cache_config.get('methods', ['GET']),
+                cache_status_codes=cache_config.get('status_codes', [200]),
+                excluded_paths=cache_config.get('excluded_paths', [
+                    '/admin', '/docs', '/redoc', '/openapi.json'
+                ]),
+                vary_headers=cache_config.get('vary_headers', ['Authorization'])
+            )
         
         # Apply all middlewares to the app
         try:
@@ -107,15 +113,7 @@ class EagleAPI(FastAPI):
             self.logger.error(f"Error applying middlewares: {e}")
             raise
     
-    def _setup_cache(self):
-        """Set up caching system."""
-        try:
-            setup_eagle_cache(self, self.cache_config)
-            self.logger.info("Cache system initialized successfully")
-        except Exception as e:
-            self.logger.warning(f"Cache initialization failed: {e}")
-            # Continue without cache
-    
+
     async def on_startup(self):
         """Handle application startup."""
         self.logger.info("Starting up Eagle application...")
@@ -128,8 +126,6 @@ class EagleAPI(FastAPI):
             # Create superuser if it doesn't exist
             await self._create_initial_superuser()
             
-            # Warm up cache if configured
-            await self._warm_cache()
             
         except Exception as e:
             self.logger.error(f"Error during database initialization: {e}")
@@ -172,27 +168,12 @@ class EagleAPI(FastAPI):
             self.logger.error(f"Error creating initial superuser: {e}")
             raise
             
-    async def _warm_cache(self):
-        """Warm up cache with initial data."""
-        try:
-            cache = cache_manager.get_cache()
-            if cache:
-                # Add your cache warming logic here
-                # Example: pre-load configuration
-                self.logger.info("Cache warming completed")
-        except Exception as e:
-            self.logger.warning(f"Cache warming failed: {e}")
-    
+
     async def on_shutdown(self):
         """Handle application shutdown events."""
         self.logger.info("Shutting down Eagle application...")
         
         try:
-            # Close cache connections
-            await cache_manager.close_all()
-            self.logger.info("Cache connections closed")
-            
-            # Close database connections if they exist
             self.logger.info("Eagle Application shutdown complete")
                 
         except Exception as e:
@@ -238,7 +219,6 @@ def create_app(
     redoc_url: str = "/redoc",
     openapi_url: str = "/openapi.json",
     debug: bool = False,
-    cache_config: Optional[Dict[str, Any]] = None,
     middleware_config: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> EagleAPI:
@@ -253,24 +233,6 @@ def create_app(
         redoc_url: The URL where the ReDoc documentation will be served.
         openapi_url: The URL where the OpenAPI schema will be served.
         debug: Whether to run the application in debug mode.
-        cache_config: Cache configuration dictionary. Examples:
-            # In-memory cache (default)
-            None or {"backend": "memory"}
-            
-            # Redis cache
-            {
-                "backend": "redis",
-                "redis_url": "redis://localhost:6379/0",
-                "serializer": "json",
-                "default_ttl": 3600
-            }
-            
-            # Memcached
-            {
-                "backend": "memcached",
-                "servers": ["localhost:11211"],
-                "serializer": "pickle"
-            }
         **kwargs: Additional keyword arguments to pass to the FastAPI constructor.
         
         middleware_config: Middleware configuration dictionary. Example:
@@ -330,7 +292,6 @@ def create_app(
             description=description,
             version=version,
             debug=debug,
-            cache_config=cache_config,
             middleware_config=default_middleware_config,
             **kwargs
         )       
@@ -345,15 +306,12 @@ def create_app(
         logger.info("Application initialization complete")
 
         
-        
-        # Enhanced health check with cache status
         @app.get("/health", include_in_schema=True)
         async def health_check(current_user: User = Depends(get_current_superuser)):
             """Health check endpoint."""
             health_status = {
                 "status": "ok",
                 "database": "disconnected",
-                "cache": "unavailable"
             }
             
             # Check database
@@ -367,29 +325,7 @@ def create_app(
             except Exception as e:
                 health_status["database"] = "disconnected"
                 health_status["database_error"] = str(e)
-            
-            # Check cache
-            try:
-                cache = cache_manager.get_cache()
-                if cache:
-                    # Test cache operation
-                    test_key = "health_check_test"
-                    await cache.set(test_key, "ok", ttl=10)
-                    result = await cache.get(test_key)
-                    await cache.delete(test_key)
-                    
-                    if result == "ok":
-                        health_status["cache"] = "connected"
-                        cache_stats = await cache.stats()
-                        health_status["cache_stats"] = {
-                            "hit_rate": cache_stats.hit_rate,
-                            "total_operations": cache_stats.hits + cache_stats.misses
-                        }
-                    else:
-                        health_status["cache"] = "error"
-            except Exception as e:
-                health_status["cache"] = "error"
-                health_status["cache_error"] = str(e)
+
             
             return health_status
                 
