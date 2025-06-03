@@ -17,11 +17,13 @@ from sqlalchemy import text
 import os
 import logging
 from pathlib import Path
-from .db import db
+from .db import db, get_db
 from .core.config import settings
 from .middleware.logging import LoggingMiddleware
 from .cache import setup_eagle_cache, CacheConfig
 from .cache.core import cache_manager
+from .auth import User, get_current_superuser
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -69,6 +71,9 @@ class EagleAPI(FastAPI):
             await db.create_tables()
             self.logger.info("Database tables created/verified")
             
+            # Create superuser if it doesn't exist
+            await self._create_initial_superuser()
+            
             # Warm up cache if configured
             await self._warm_cache()
             
@@ -76,6 +81,43 @@ class EagleAPI(FastAPI):
             self.logger.error(f"Error during database initialization: {e}")
             raise
     
+    async def _create_initial_superuser(self):
+        """Create initial superuser if it doesn't exist."""
+        from .auth import get_user_by_email, create_user, UserCreate
+        from .core.config import settings
+        
+        try:
+            # Get an async session
+            db_gen = get_db()
+            db = await anext(db_gen)
+            
+            try:
+                # Check if superuser already exists
+                existing_user = await get_user_by_email(db, settings.SUPERUSER_EMAIL)
+                
+                if existing_user is None:
+                    # Create superuser
+                    user_data = {
+                        'username': 'admin',
+                        'email': settings.SUPERUSER_EMAIL,
+                        'password': settings.SUPERUSER_PASSWORD,
+                        'is_superuser': True,
+                        'is_active': True,
+                        'full_name': 'Admin User'
+                    }
+                    user_in = UserCreate(**user_data)
+                    await create_user(db, user_in)
+                    await db.commit()
+                    self.logger.info("Initial superuser created successfully")
+                else:
+                    self.logger.info("Superuser already exists, skipping creation")
+            finally:
+                await db.close()
+                
+        except Exception as e:
+            self.logger.error(f"Error creating initial superuser: {e}")
+            raise
+            
     async def _warm_cache(self):
         """Warm up cache with initial data."""
         try:
@@ -210,27 +252,22 @@ def create_app(
             allow_headers=["*"],
         )
 
-        #app.add_middleware(LoggingMiddleware)
         
         # Import and include API routers
         try:
             from .auth import router as auth_router
-            app.include_router(auth_router, prefix="/auth")
+            app.include_router(auth_router)
             logger.info("Auth router included")
         except ImportError as e:
             logger.warning(f"Could not import API router: {e}")
         
         logger.info("Application initialization complete")
-        # Add root endpoint that redirects to the API documentation
-        @app.get("/root", include_in_schema=True)
-        async def root():
-            """Root endpoint that redirects to the API documentation."""
-            from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=docs_url)
+
+        
         
         # Enhanced health check with cache status
         @app.get("/health", include_in_schema=True)
-        async def health_check():
+        async def health_check(current_user: User = Depends(get_current_superuser)):
             """Health check endpoint."""
             health_status = {
                 "status": "ok",

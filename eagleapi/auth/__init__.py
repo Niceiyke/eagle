@@ -1,24 +1,22 @@
-#auth __init__.py
+# auth/__init__.py
 """
 Authentication and authorization module for Eagle Framework.
-
 Provides JWT authentication, OAuth2 integration, and role-based access control.
 """
 import os
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, status, APIRouter
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import Column, String, Boolean, select
 
-from ..db import db,get_db
-from ..services.auth import get_user_by_email,get_user_by_username,authenticate_user,create_user
-from ..schemas.user import UserCreate
-from ..core import security
+from ..db import BaseModel as DBBaseModel, get_db, Mapped, mapped_column
 from ..core.config import settings
+
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -26,108 +24,123 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
 # JWT settings
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
+SECRET_KEY = getattr(settings,"SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable must be set")
+
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+ACCESS_TOKEN_EXPIRE_MINUTES = getattr(settings, 'ACCESS_TOKEN_EXPIRE_MINUTES', 30)
 
-
-from pydantic import BaseModel as PydanticBaseModel
-
-class Token(PydanticBaseModel):
+# === Pydantic Models ===
+class Token(BaseModel):
     """Token response model."""
     access_token: str
     token_type: str
 
-    class Config:
-        orm_mode = True
-        from_attributes = True
-
-
-class TokenData(PydanticBaseModel):
+class TokenData(BaseModel):
     """Token data model."""
     username: Optional[str] = None
     scopes: List[str] = []
 
-    class Config:
-        orm_mode = True
-        from_attributes = True
-
-
-class User(PydanticBaseModel):
+class UserBase(BaseModel):
     """Base user model."""
-    id: int
-    username: str
-    email: str
-    full_name: Optional[str] = None
-    disabled: bool = False
-    is_superuser: bool = False
-    scopes: List[str] = []
-    
-    class Config:
-        orm_mode = True
-        from_attributes = True
-
-
-class UserInDB(User):
-    """User model with password hash."""
-    hashed_password: str
-    
-    class Config:
-        orm_mode = True
-        from_attributes = True
-
-
-class UserCreate(PydanticBaseModel):
-    """User creation model."""
     username: str
     email: EmailStr
-    password: str
     full_name: Optional[str] = None
-    
-    class Config:
-        orm_mode = True
-        from_attributes = True
+    is_active: bool = True
+    is_superuser: bool = False
 
+class UserCreate(UserBase):
+    """User creation model."""
+    password: str
 
-class UserUpdate(PydanticBaseModel):
+class UserUpdate(BaseModel):
     """User update model."""
     email: Optional[EmailStr] = None
     full_name: Optional[str] = None
-    disabled: Optional[bool] = None
+    is_active: Optional[bool] = None
     is_superuser: Optional[bool] = None
+    password: Optional[str] = None
+
+class UserResponse(UserBase):
+    """User response model."""
+    id: int
+    created_at: datetime
+    updated_at: datetime
     
     class Config:
-        orm_mode = True
         from_attributes = True
 
+# === Database Model ===
+class User(DBBaseModel):
+    """User database model."""
+    __tablename__ = "users"
+    
+    username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+# === Utility Functions ===
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a hash."""
     return pwd_context.verify(plain_password, hashed_password)
-
 
 def get_password_hash(password: str) -> str:
     """Generate a password hash."""
     return pwd_context.hash(password)
 
-
-def create_access_token(
-    data: Dict[str, Any], expires_delta: Optional[timedelta] = None
-) -> str:
+def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     """Create a new access token."""
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+# === Database Operations ==
+async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
+    """Get user by email."""
+    result = await db.execute(select(User).where(User.email == email))
+    return result.scalar_one_or_none()
 
+async def get_user_by_username(db: AsyncSession, username: str) -> Optional[User]:
+    """Get user by username."""
+    result = await db.execute(select(User).where(User.username == username))
+    return result.scalar_one_or_none()
+
+async def authenticate_user(db: AsyncSession, username: str, password: str) -> Optional[User]:
+    """Authenticate user with username/email and password."""
+    # Try username first, then email
+    user = await get_user_by_username(db, username)
+    if not user:
+        user = await get_user_by_email(db, username)
+    
+    if not user or not verify_password(password, user.hashed_password):
+        return None
+    return user
+
+async def create_user(db: AsyncSession, user_in: UserCreate) -> User:
+    """Create a new user."""
+    hashed_password = get_password_hash(user_in.password)
+    user_data = user_in.model_dump(exclude={'password'})
+    user_data['hashed_password'] = hashed_password
+    
+    user = User(**user_data)
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+# === Authentication Dependencies ===
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(db.get_session)
+    db: AsyncSession = Depends(get_db)
 ) -> User:
     """Get the current authenticated user."""
     credentials_exception = HTTPException(
@@ -135,106 +148,72 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
     except JWTError:
         raise credentials_exception
     
-    # In a real app, you would fetch the user from the database here
-    # user = await get_user(db, username=token_data.username)
-    # if user is None:
-    #     raise credentials_exception
-    # return user
+    user = await get_user_by_username(db, username)
+    if user is None:
+        # Try by email if username fails
+        user = await get_user_by_email(db, username)
     
-    # For now, return a mock user
-    return User(
-        id=1,
-        username=token_data.username,
-        email="user@example.com",
-        is_superuser=False
-    )
+    if user is None:
+        raise credentials_exception
+    return user
 
-
-async def get_current_active_user(
-    current_user: User = Depends(get_current_user),
-) -> User:
+async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
     """Get the current active user."""
-    if current_user.disabled:
+    if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
+async def get_current_superuser(current_user: User = Depends(get_current_active_user)) -> User:
+    """Get current superuser."""
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+    return current_user
 
-# Authentication routers
-from fastapi import APIRouter
+# === API Routes ===
+router = APIRouter(prefix="/auth", tags=["authentication"])
 
-router = APIRouter(tags=["auth"])
-
-
-
-
-@router.post(
-    "/register",
-    response_model=UserInDB,
-    status_code=status.HTTP_201_CREATED,
-    summary="Register a new user",
-    response_description="The created user"
-)
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register_user(
     user_in: UserCreate,
     db: AsyncSession = Depends(get_db)
-) -> Any:
-    """
-    Register a new user.
-    
-    - **username**: must be unique
-    - **email**: must be a valid email and unique
-    - **password**: at least 8 characters
-    - **full_name**: user's full name
-    """
-    # Check if user already exists by email or username
-    db_user = await get_user_by_email(db, email=user_in.email)
-    if db_user:
+):
+    """Register a new user."""
+    # Check if user already exists
+    if await get_user_by_email(db, user_in.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
     
-    db_user = await get_user_by_username(db, username=user_in.username)
-    if db_user:
+    if await get_user_by_username(db, user_in.username):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered"
         )
     
     # Create new user
-    user = await create_user(db=db, user_in=user_in)
+    user = await create_user(db, user_in)
     return user
 
-@router.post(
-    "/token",
-    response_model=Token,
-    summary="OAuth2 token endpoint",
-    response_description="Access token for authentication"
-)
+@router.post("/token", response_model=Token)
 async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
-) -> dict[str, str]:
-    """
-    OAuth2 compatible token login, get an access token for future requests.
-    
-    - **username**: your username or email
-    - **password**: your password
-    
-    Returns an access token that can be used in the Authorization header.
-    """
-    user = await authenticate_user(
-        db, form_data.username, form_data.password
-    )
+):
+    """OAuth2 compatible token login."""
+    user = await authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -242,40 +221,56 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = security.create_access_token(
-        data={"sub": user.email},
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username},
         expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@router.get(
-    "/me",
-    response_model=UserInDB,
-    summary="Get current user information",
-    response_description="The current user's information"
-)
-async def read_users_me(
-    current_user: User = Depends(security.get_current_active_user)
-) -> Any:
-    """
-    Get current user information.
-    
-    Requires authentication with a valid access token.
-    """
+@router.get("/me", response_model=UserResponse)
+async def read_users_me(current_user: User = Depends(get_current_active_user)):
+    """Get current user information."""
     return current_user
 
-
-
-
-
-
-
-
+@router.put("/me", response_model=UserResponse)
+async def update_current_user(
+    user_update: UserUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update current user information."""
+    update_data = user_update.model_dump(exclude_unset=True)
+    
+    # Hash password if provided
+    if 'password' in update_data:
+        update_data['hashed_password'] = get_password_hash(update_data.pop('password'))
+    
+    # Check for unique constraints
+    if 'email' in update_data and update_data['email'] != current_user.email:
+        if await get_user_by_email(db, update_data['email']):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+    
+    if 'username' in update_data and update_data['username'] != current_user.username:
+        if await get_user_by_username(db, update_data['username']):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already registered"
+            )
+    
+    # Update user
+    updated_user = await current_user.update(db, **update_data)
+    await db.commit()
+    return updated_user
 
 # Export public API
 __all__ = [
-    'Token', 'User', 'UserInDB', 'UserCreate', 'UserUpdate',
-    'get_current_user', 'get_current_active_user', 'create_access_token',
-    'verify_password', 'get_password_hash', 'router'
+    'User', 'UserCreate', 'UserUpdate', 'UserResponse', 'Token',
+    'get_current_user', 'get_current_active_user', 'get_current_superuser',
+    'create_access_token', 'verify_password', 'get_password_hash',
+    'authenticate_user', 'create_user', 'get_user_by_email', 'get_user_by_username',
+    'router'
 ]

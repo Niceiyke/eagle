@@ -545,7 +545,8 @@ class Admin:
                     "model_name": model_name,
                     "item": item,
                     "fields": model_info.fields,
-                    "admin_path": self.path
+                    "admin_path": self.path,
+                    "model_info": model_info  # Add model_info to template context
                 }
             )
             
