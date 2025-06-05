@@ -12,7 +12,7 @@ from fastapi import Depends, HTTPException, status, APIRouter
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import Column, String, Boolean, select
+from sqlalchemy import String, Boolean, select
 
 from ..db import BaseModel as DBBaseModel, get_db, Mapped, mapped_column
 from ..core.config import settings

@@ -9,17 +9,18 @@ authentication, admin interface, and more, while maintaining performance and dev
 __version__ = "0.1.0"
 
 from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer
-from typing import Optional, List, Dict, Any, Union
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional, Dict, Any
 from sqlalchemy import text
 import os
 import logging
 from pathlib import Path
-from .db import db, get_db
+from .db import db, get_db,migration_manager
 from .auth import User, get_current_superuser
 from .middleware import MiddlewareManager
+from .db.migrations import MigrationError
+import asyncio
+import sys
+from .core.config import settings
 
 
 # Configure logging
@@ -42,7 +43,93 @@ class EagleAPI(FastAPI):
         self._setup()
         self.add_event_handler("startup", self.on_startup)
         self.add_event_handler("shutdown", self.on_shutdown)
+
     
+    
+    def _setup_migration_endpoints(self):
+        """Add migration management endpoints"""
+        # Prevent duplicate endpoint registration
+        if hasattr(self, "_migration_endpoints_registered"):
+            return
+            
+        from .auth import get_current_superuser
+        from .db import get_migration_status, get_migration_history, create_migration
+        
+        @self.get("/migrations/status", include_in_schema=True)
+        async def migration_status(
+            current_user: User = Depends(get_current_superuser)
+        ):
+            """Get migration status (superuser only)"""
+            try:
+                return get_migration_status()
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to get migration status: {e}"
+                )
+        
+        @self.get("/migrations/history", include_in_schema=True)
+        async def migration_history(
+            current_user: User = Depends(get_current_superuser)
+        ):
+            """Get migration history (superuser only)"""
+            try:
+                history = get_migration_history()
+                return [
+                    {
+                        "revision": m.revision,
+                        "description": m.description,
+                        "created_at": m.created_at.isoformat(),
+                        "is_head": m.is_head,
+                        "is_current": m.is_current
+                    }
+                    for m in history
+                ]
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to get migration history: {e}"
+                )
+        
+        @self.post("/migrations/upgrade", include_in_schema=True)
+        async def upgrade_migrations(
+            revision: str = "head",
+            current_user: User = Depends(get_current_superuser)
+        ):
+            """Upgrade migrations (superuser only)"""
+            try:
+                from .db import upgrade_database
+                await asyncio.get_event_loop().run_in_executor(
+                    None, upgrade_database, revision
+                )
+                return {"message": f"Upgraded to revision: {revision}"}
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Migration upgrade failed: {e}"
+                )
+        
+        @self.post("/migrations/create", include_in_schema=True)
+        async def create_migration(
+            revision: str,
+            description: str,
+            current_user: User = Depends(get_current_superuser)
+        ):
+            """Create a new migration (superuser only)"""
+            try:
+                from .db import create_migration
+                await asyncio.get_event_loop().run_in_executor(
+                    None, create_migration, revision, description
+                )
+                return {"message": f"Created migration: {revision}"}
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Migration creation failed: {e}"
+                )
+                
+        # Mark endpoints as registered
+        self._migration_endpoints_registered = True
     def _setup(self):
         """Set up the application with middleware and routes."""
         # Configure and apply middlewares
@@ -91,19 +178,19 @@ class EagleAPI(FastAPI):
                 period=rate_limit_config.get('period', 60)
             )
             
-        # Configure caching if enabled
-        cache_config = config.get('cache', {})
-        if cache_config.get('enabled', False):
-            self.middleware_manager.add_middleware(
-                'cache',
-                default_ttl=cache_config.get('default_ttl', 300),
-                cache_methods=cache_config.get('methods', ['GET']),
-                cache_status_codes=cache_config.get('status_codes', [200]),
-                excluded_paths=cache_config.get('excluded_paths', [
-                    '/admin', '/docs', '/redoc', '/openapi.json'
-                ]),
-                vary_headers=cache_config.get('vary_headers', ['Authorization'])
-            )
+        # # Configure caching if enabled
+        # cache_config = config.get('cache', {})
+        # if cache_config.get('enabled', False):
+        #     self.middleware_manager.add_middleware(
+        #         'cache',
+        #         default_ttl=cache_config.get('default_ttl', 300),
+        #         cache_methods=cache_config.get('methods', ['GET']),
+        #         cache_status_codes=cache_config.get('status_codes', [200]),
+        #         excluded_paths=cache_config.get('excluded_paths', [
+        #             '/admin', '/docs', '/redoc', '/openapi.json'
+        #         ]),
+        #         vary_headers=cache_config.get('vary_headers', ['Authorization'])
+        #     )
         
         # Apply all middlewares to the app
         try:
@@ -113,22 +200,39 @@ class EagleAPI(FastAPI):
             self.logger.error(f"Error applying middlewares: {e}")
             raise
     
-
     async def on_startup(self):
-        """Handle application startup."""
+        """Handle application startup with migrations."""
         self.logger.info("Starting up Eagle application...")
-        # Initialize database connection and create tables
+        
         try:
             self.logger.info("Initializing database connection...")
-            await db.create_tables()
-            self.logger.info("Database tables created/verified")
             
-            # Create superuser if it doesn't exist
+            # Auto-migrate if enabled
+            auto_migrate = getattr(self, '_auto_migrate', True)
+            
+            # Only create initial migration if no migrations exist
+            try:
+                current_rev = migration_manager.current()
+                if current_rev is None:
+                    self.logger.info("No existing migrations found, creating initial migration")
+                    migration_manager.create_migration("Initial migration")
+                else:
+                    self.logger.info(f"Existing migrations found, current revision: {current_rev}")
+            except Exception as e:
+                self.logger.warning(f"Could not check for existing migrations: {e}")
+                if auto_migrate:
+                    self.logger.info("Creating initial migration")
+                    migration_manager.create_migration("Initial migration")
+            
+            
+            
+            self.logger.info("Database setup completed")
+            
+            # Create superuser
             await self._create_initial_superuser()
             
-            
         except Exception as e:
-            self.logger.error(f"Error during database initialization: {e}")
+            self.logger.error(f"Error during startup: {e}")
             raise
     
     async def _create_initial_superuser(self):
@@ -209,7 +313,70 @@ class EagleAPI(FastAPI):
         # Note: This won't remove already mounted routes, but will prevent new ones
         self._admin = None
 
-
+    def enable_migrations(
+            self, 
+            migrations_dir: str = "migrations",
+            auto_migrate: bool = True
+        ):
+        print("Enabling migrations...", settings.DATABASE_URL)
+        """
+        Enable database migrations.
+        
+        This method initializes the migrations directory and sets up Alembic configuration.
+        If the migrations directory doesn't exist, it will be created along with the
+        necessary Alembic configuration files.
+        
+        Args:
+            migrations_dir: Directory to store migration files (relative to the project root)
+            auto_migrate: Whether to auto-run migrations on startup
+            
+        Returns:
+            MigrationManager instance
+            
+        Raises:
+            MigrationError: If there's an error initializing the migrations
+        """
+        from pathlib import Path
+        from .db import migration_manager
+        
+        try:
+            # Convert to absolute path and ensure directory exists
+            migrations_path = Path(migrations_dir).absolute()
+            self.logger.info(f"Configuring migrations in: {migrations_path}")
+            
+            # Ensure the directory exists
+            migrations_path.mkdir(parents=True, exist_ok=True)
+            
+            # Set the migrations directory before initializing
+            migration_manager.migrations_dir = migrations_path
+            
+            # Initialize the migrations directory if it's empty
+            if not any(file for file in migrations_path.iterdir() if file.name != '__pycache__'):
+                self.logger.info(f"Initializing new migrations directory: {migrations_path}")
+                if not migration_manager.init("Initial migration setup"):
+                    self.logger.warning("Migrations directory already contains files, skipping initialization")
+            
+            self._auto_migrate = auto_migrate
+            
+            # Ensure the migrations directory is in Python path
+            migrations_parent = str(migrations_path.parent)
+            if migrations_parent not in sys.path:
+                sys.path.insert(0, migrations_parent)
+            
+            # Add migration endpoints
+            self._setup_migration_endpoints()
+            
+            self.logger.info(f"Database migrations enabled in {migrations_path}")
+            
+            if auto_migrate:
+                self.logger.info("Auto-migration is enabled and will run on startup")
+                
+        except Exception as e:
+            error_msg = f"Failed to enable migrations: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise MigrationError(error_msg) from e
+            
+        return migration_manager
 
 def create_app(
     title: str = "Eagle Framework",
@@ -220,6 +387,9 @@ def create_app(
     openapi_url: str = "/openapi.json",
     debug: bool = False,
     middleware_config: Optional[Dict[str, Any]] = None,
+    enable_migrations: bool = True,
+    migrations_dir: str = "migrations",
+    auto_migrate: bool = True,
     **kwargs
 ) -> EagleAPI:
     """
@@ -291,10 +461,21 @@ def create_app(
             title=title,
             description=description,
             version=version,
+            docs_url=docs_url,
+            redoc_url=redoc_url,
+            openapi_url=openapi_url,
             debug=debug,
             middleware_config=default_middleware_config,
             **kwargs
-        )       
+        )
+        
+        # Enable migrations if requested
+        if enable_migrations:
+            app.enable_migrations(
+                migrations_dir=migrations_dir,
+                auto_migrate=auto_migrate
+            )
+            
         # Import and include API routers
         try:
             from .auth import router as auth_router
