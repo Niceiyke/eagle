@@ -9,15 +9,16 @@ authentication, admin interface, and more, while maintaining performance and dev
 __version__ = "0.1.0"
 
 from fastapi import FastAPI, Depends, HTTPException, status
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from sqlalchemy import text
 import os
 import logging
 from pathlib import Path
-from .db import db, get_db,migration_manager
+from .db import db, get_db
+from .db.migrations import migration_manager,MigrationError
 from .auth import User, get_current_superuser
 from .middleware import MiddlewareManager
-from .db.migrations import MigrationError
+from .utils.routes import router as utils_router
 import asyncio
 import sys
 from .core.config import settings
@@ -53,7 +54,7 @@ class EagleAPI(FastAPI):
             return
             
         from .auth import get_current_superuser
-        from .db import get_migration_status, get_migration_history, create_migration
+        from .db.migrations import get_migration_status, get_migration_history
         
         @self.get("/migrations/status", include_in_schema=True)
         async def migration_status(
@@ -98,7 +99,7 @@ class EagleAPI(FastAPI):
         ):
             """Upgrade migrations (superuser only)"""
             try:
-                from .db import upgrade_database
+                from .db.migrations import upgrade_database
                 await asyncio.get_event_loop().run_in_executor(
                     None, upgrade_database, revision
                 )
@@ -117,7 +118,7 @@ class EagleAPI(FastAPI):
         ):
             """Create a new migration (superuser only)"""
             try:
-                from .db import create_migration
+                from .db.migrations import create_migration
                 await asyncio.get_event_loop().run_in_executor(
                     None, create_migration, revision, description
                 )
@@ -134,6 +135,9 @@ class EagleAPI(FastAPI):
         """Set up the application with middleware and routes."""
         # Configure and apply middlewares
         self._setup_middlewares()
+        
+        # Include utility routes
+        self.include_router(utils_router)
         
         # Set up admin dashboard
         self._admin = None
@@ -337,7 +341,7 @@ class EagleAPI(FastAPI):
             MigrationError: If there's an error initializing the migrations
         """
         from pathlib import Path
-        from .db import migration_manager
+        from .db.migrations import migration_manager
         
         try:
             # Convert to absolute path and ensure directory exists

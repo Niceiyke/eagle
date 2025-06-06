@@ -1,8 +1,7 @@
-# db __init__.py
 """
 Eagle Database Module - Enhanced Version with Complete Type Safety
 
-Provides a robust, production-ready database interface with:
+This module provides a robust, production-ready database interface with:
 - Comprehensive type hints for all methods and functions
 - Async SQLAlchemy 2.0+ support with connection retry
 - Enhanced error handling and validation
@@ -13,126 +12,89 @@ Provides a robust, production-ready database interface with:
 - Generic type support for better IDE experience
 """
 from __future__ import annotations
-from typing import (
-    AsyncGenerator, Optional, TypeVar, Type, Dict, Any, List, Union, Callable, 
-    Generic, Protocol, Sequence, Mapping, Awaitable, ClassVar, Final,
-    get_type_hints, get_origin, get_args, cast, overload
-)
-from typing_extensions import Self, ParamSpec, Concatenate
-from datetime import datetime, timezone
-from functools import lru_cache, wraps
-from enum import Enum
 import os
 import logging
-import asyncio
-from dataclasses import dataclass
-import time
-from abc import ABC, abstractmethod
-from .migrations import (
-    MigrationManager, migration_manager,
-    init_migrations, create_migration, upgrade_database, 
-    downgrade_database, auto_upgrade_database, get_migration_status,get_migration_history
+from typing import Any, Dict, List, Optional, Type, TypeVar, Union, get_type_hints, cast
+from typing_extensions import ParamSpec, TypeVar, Callable, Final, Awaitable, Self, Mapping
+from datetime import datetime
+from sqlalchemy import func,select,update,delete,text,and_,or_
+from sqlalchemy import inspect as sa_inspect
+from functools import wraps
+# Re-export core components
+from .models.base import Base, TimestampMixin, SoftDeleteMixin
+from .models.mixins import CRUDMixin
+from .schemas import SchemaGenerator, SchemaTypeEnum
+from .session import Database, db, get_db
+from .exceptions import (
+    DatabaseError, ConnectionError, ValidationError, 
+    QueryError, NotFoundError, IntegrityError, MigrationError, TimeoutError
 )
-
-from sqlalchemy.ext.asyncio import (
-    create_async_engine, 
-    AsyncSession, 
-    async_sessionmaker,
-    AsyncEngine
+from .types import (
+    ModelType, SchemaType, ColumnType, FilterDict, SchemaCache,
+    PaginationResult, SortDirection, JoinType, FilterOperator, FilterCondition
 )
-from sqlalchemy.orm import (
-    DeclarativeBase, 
-    declared_attr, 
-    Mapped, 
-    mapped_column,
-    InstrumentedAttribute
+from .utils import (
+    retry_on_db_error, execute_with_retry, get_model_columns,
+    get_primary_key, model_to_dict, DatabaseTransaction
 )
-from sqlalchemy import (
-    Column, Integer, String, DateTime, Boolean, 
-    ForeignKey, func, select, update, delete, 
-    inspect as sa_inspect, text, and_, or_,
-    Result, ScalarResult, CursorResult
-)
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
-from sqlalchemy.sql.sqltypes import (
-    Integer as SQLInteger, String as SQLString, DateTime as SQLDateTime, 
-    Boolean as SQLBoolean, Float, Text, JSON, ARRAY, Enum as SQLEnum
-)
-from sqlalchemy.sql import Select, Update, Delete
-from sqlalchemy.sql.elements import BinaryExpression
+from .migrations import MigrationManager
 
-# Pydantic imports
-from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field, create_model, ValidationError
+from pydantic import create_model
 
-# Enhanced type variables with better constraints
-ModelType = TypeVar("ModelType", bound="BaseModel")
-SchemaType_T = TypeVar("SchemaType_T", bound=PydanticBaseModel)
-P = ParamSpec("P")
-T = TypeVar("T")
-R = TypeVar("R")
+# Type variables for generic typing
+T = TypeVar('T')
+P = ParamSpec('P')
+R = TypeVar('R')
 
-# Protocol definitions for better type safety
-class DatabaseProtocol(Protocol):
-    """Protocol for database-like objects"""
-    async def get_session(self) -> AsyncGenerator[AsyncSession, None]: ...
-    async def health_check(self) -> bool: ...
+# SQLAlchemy imports
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, func, select, update, delete, text, and_, or_
+from sqlalchemy.orm import Mapped, mapped_column, InstrumentedAttribute, sessionmaker
+from sqlalchemy.sql import Select, Update, Delete, text
+from sqlalchemy.sql.sqltypes import Integer as SQLInteger, String as SQLString, DateTime as SQLDateTime, Boolean as SQLBoolean, Text, Float, JSON, ARRAY, Enum as SQLEnum
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.engine import Result, CursorResult
+from sqlalchemy.exc import OperationalError
+from typing import AsyncGenerator, Generic, Sequence
 
-class BaseModelProtocol(Protocol):
-    """Protocol for model-like objects"""
-    id: int
-    created_at: datetime
-    updated_at: datetime
+# Re-export SQLAlchemy types for convenience
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import DeclarativeBase, declared_attr
 
-@dataclass(frozen=True)
-class PaginationResult(Generic[T]):
-    """Strongly typed pagination result container"""
-    items: Sequence[T]
-    total: int
-    page: int
-    page_size: int
-    total_pages: int
-    has_next: bool
-    has_prev: bool
+# Re-export Pydantic for schema definitions
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field, validator
+
+# For backward compatibility
+__all__ = [
+    # Core components
+    'Database', 'db', 'Base', 'BaseModel', 'get_db',
     
-    def __post_init__(self) -> None:
-        """Validate pagination parameters"""
-        if self.page < 1:
-            raise ValueError("Page must be >= 1")
-        if self.page_size < 1:
-            raise ValueError("Page size must be >= 1")
-        if self.total < 0:
-            raise ValueError("Total must be >= 0")
+    # Models and mixins
+    'TimestampMixin', 'SoftDeleteMixin', 'CRUDMixin',
+    
+    # Schemas
+    'SchemaGenerator', 'SchemaTypeEnum', 'PydanticBaseModel',
+    
+    # Exceptions
+    'DatabaseError', 'ConnectionError', 'ValidationError', 
+    'QueryError', 'NotFoundError', 'IntegrityError', 'MigrationError', 'TimeoutError',
+    
+    # Types
+    'ModelType', 'SchemaType', 'ColumnType', 'FilterDict', 'SchemaCache',
+    'PaginationResult', 'SortDirection', 'JoinType', 'FilterOperator', 'FilterCondition',
+    
+    # Utilities
+    'retry_on_db_error', 'execute_with_retry', 'get_model_columns',
+    'get_primary_key', 'model_to_dict', 'DatabaseTransaction',
+    
+    # SQLAlchemy types and functions
+    'AsyncSession', 'DeclarativeBase', 'declared_attr', 'Mapped', 
+    'mapped_column', 'InstrumentedAttribute', 'Column', 'Integer', 
+    'String', 'DateTime', 'Boolean', 'ForeignKey', 'func', 'select', 
+    'update', 'delete', 'text', 'and_', 'or_', 'ConfigDict', 'Field', 'validator'
+]
 
-class SchemaTypeEnum(str, Enum):
-    """Schema generation types with better naming"""
-    CREATE = "create"
-    UPDATE = "update"
-    RESPONSE = "response"
-    LIST = "list"
-    PARTIAL = "partial"
-
-class DatabaseError(Exception):
-    """Base database exception with context"""
-    def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None) -> None:
-        super().__init__(message)
-        self.context = context or {}
-
-class ConnectionError(DatabaseError):
-    """Database connection related errors"""
-    pass
-
-class ValidationError(DatabaseError):
-    """Data validation errors"""
-    pass
-
-class QueryError(DatabaseError):
-    """Query execution errors"""
-    pass
-
-# Type aliases for better readability
-FilterDict = Dict[str, Any]
-SchemaCache = Dict[str, Type[PydanticBaseModel]]
-ColumnType = Union[InstrumentedAttribute[Any], str]
+# For backward compatibility
+BaseModel = Base  # Alias for backward compatibility
 
 class SchemaGenerator:
     """Enhanced schema generator with comprehensive type hints"""
@@ -468,28 +430,6 @@ class Database:
             self._logger.error(f"Migration failed: {e}")
             raise
     
-    # @retry_on_db_error()
-    # async def create_tables(self) -> None:
-    #     """Create tables with retry logic and proper error handling"""
-    #     if not self.engine:
-    #         raise ConnectionError("Database engine not initialized")
-            
-    #     self._logger.info("Creating database tables...")
-        
-    #     try:
-    #         async with self.engine.begin() as conn:
-    #             await conn.run_sync(Base.metadata.create_all)
-    #         self._logger.info("Database tables created successfully")
-    #     except Exception as e:
-    #         self._logger.error(f"Failed to create tables: {e}")
-    #         raise DatabaseError(f"Table creation failed: {e}")
-    
-    # async def close(self) -> None:
-    #     """Properly close database connections"""
-    #     if self.engine:
-    #         await self.engine.dispose()
-    #         self._logger.info("Database connections closed")
-
     async def create_tables(self, auto_migrate: bool = True) -> None:
         """Create tables with optional auto-migration"""
         if not self.engine:
@@ -533,21 +473,27 @@ class Base(DeclarativeBase):
         name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', cls.__name__)
         return re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
 
-class BaseModel(Base, Generic[ModelType]):
-    """Production-ready base model with comprehensive functionality and strong typing"""
+class BaseModel(Base, CRUDMixin, Generic[ModelType]):
+    """Production-ready base model with comprehensive functionality and strong typing.
+    
+    This model includes built-in CRUD operations, timestamps, and common fields.
+    All models should inherit from this class to get these features automatically.
+    """
     __abstract__ = True
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
-        default=lambda: datetime.now(timezone.utc), 
-        nullable=False
+        default=lambda: datetime.now(), 
+        nullable=False,
+        doc="Timestamp when the record was created"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc), 
-        nullable=False
+        default=lambda: datetime.now(),
+        onupdate=lambda: datetime.now(), 
+        nullable=False,
+        doc="Timestamp when the record was last updated"
     )
     
     # Schema generation methods with proper return types
@@ -576,198 +522,7 @@ class BaseModel(Base, Generic[ModelType]):
         """Get partial update schema with proper typing"""
         return _schema_generator.generate_schema(cls, SchemaTypeEnum.PARTIAL)
     
-    # Enhanced database operations with comprehensive type hints
-    @classmethod
-    async def get(cls, session: AsyncSession, id: int) -> Optional[Self]:
-        """Get by ID with proper type checking and return type"""
-        if not isinstance(id, int) or id <= 0:
-            return None
-        result = await session.get(cls, id)
-        return cast(Optional[Self], result)
-    
-    @classmethod
-    async def get_by(cls, session: AsyncSession, **filters: Any) -> Optional[Self]:
-        """Get single record by filters with proper typing"""
-        query: Select[tuple[Self]] = select(cls).filter_by(**filters)
-        result: Result[tuple[Self]] = await session.execute(query)
-        return result.scalar_one_or_none()
-    
-    @classmethod
-    async def get_all(cls, session: AsyncSession, **filters: Any) -> List[Self]:
-        """Get all records with optional filters and proper typing"""
-        query: Select[tuple[Self]] = select(cls)
-        if filters:
-            query = query.filter_by(**filters)
-        result: Result[tuple[Self]] = await session.execute(query)
-        return list(result.scalars().all())
-    
-    @classmethod
-    async def get_many(
-        cls, 
-        session: AsyncSession, 
-        ids: Sequence[int]
-    ) -> List[Self]:
-        """Get multiple records by IDs with proper typing"""
-        if not ids:
-            return []
-        
-        query: Select[tuple[Self]] = select(cls).where(cls.id.in_(ids))
-        result: Result[tuple[Self]] = await session.execute(query)
-        return list(result.scalars().all())
-    
-    @classmethod
-    async def paginate(
-        cls, 
-        session: AsyncSession, 
-        page: int = 1, 
-        page_size: int = 20,
-        order_by: Optional[ColumnType] = None,
-        **filters: Any
-    ) -> PaginationResult[Self]:
-        """Paginated query with metadata and enhanced typing"""
-        if page < 1:
-            page = 1
-        if page_size < 1 or page_size > 1000:  # Prevent abuse
-            page_size = 20
-            
-        offset: int = (page - 1) * page_size
-        
-        # Build base query with proper typing
-        query: Select[tuple[Self]] = select(cls)
-        if filters:
-            query = query.filter_by(**filters)
-        
-        # Add ordering if specified
-        if order_by is not None:
-            if isinstance(order_by, str):
-                order_by = getattr(cls, order_by, cls.id)
-            query = query.order_by(order_by)
-        else:
-            query = query.order_by(cls.id)
-        
-        # Get total count
-        count_query = select(func.count()).select_from(query.subquery())
-        total: int = await session.scalar(count_query) or 0
-        
-        # Get paginated results
-        paginated_query = query.offset(offset).limit(page_size)
-        result: Result[tuple[Self]] = await session.execute(paginated_query)
-        items: List[Self] = list(result.scalars().all())
-        
-        total_pages: int = (total + page_size - 1) // page_size
-        
-        return PaginationResult(
-            items=items,
-            total=total,
-            page=page,
-            page_size=page_size,
-            total_pages=total_pages,
-            has_next=page < total_pages,
-            has_prev=page > 1
-        )
-    
-    @classmethod
-    async def exists(cls, session: AsyncSession, **filters: Any) -> bool:
-        """Check if record exists with proper typing"""
-        query: Select[tuple[int]] = select(cls.id).filter_by(**filters).limit(1)
-        result: Optional[int] = await session.scalar(query)
-        return result is not None
-    
-    @classmethod
-    async def count(cls, session: AsyncSession, **filters: Any) -> int:
-        """Count records matching filters with proper typing"""
-        query = select(func.count(cls.id))
-        if filters:
-            query = query.filter_by(**filters)
-        result: Optional[int] = await session.scalar(query)
-        return result or 0
-    
-    @classmethod
-    async def create(cls, session: AsyncSession, **data: Any) -> Self:
-        """Create with validation and proper typing"""
-        try:
-            instance: Self = cls(**data)
-            session.add(instance)
-            await session.flush()
-            await session.refresh(instance)
-            return instance
-        except IntegrityError as e:
-            await session.rollback()
-            raise ValidationError(f"Data integrity violation: {e}")
-        except Exception as e:
-            await session.rollback()
-            raise DatabaseError(f"Create operation failed: {e}")
-    
-    @classmethod
-    async def bulk_create(
-        cls, 
-        session: AsyncSession, 
-        data_list: Sequence[Mapping[str, Any]]
-    ) -> List[Self]:
-        """Efficient bulk creation with proper typing"""
-        if not data_list:
-            return []
-            
-        try:
-            instances: List[Self] = [cls(**data) for data in data_list]
-            session.add_all(instances)
-            await session.flush()
-            
-            # Refresh all instances to get IDs
-            for instance in instances:
-                await session.refresh(instance)
-                
-            return instances
-        except IntegrityError as e:
-            await session.rollback()
-            raise ValidationError(f"Bulk create failed: {e}")
-        except Exception as e:
-            await session.rollback()
-            raise DatabaseError(f"Bulk create operation failed: {e}")
-    
-    async def update(self, session: AsyncSession, **data: Any) -> Self:
-        """Update with validation and proper return typing"""
-        try:
-            for field, value in data.items():
-                if hasattr(self, field) and field not in {'id', 'created_at'}:
-                    setattr(self, field, value)
-            
-            # Update the updated_at field
-            self.updated_at = datetime.now(timezone.utc)
-            await session.flush()
-            await session.refresh(self)
-            return self
-        except IntegrityError as e:
-            await session.rollback()
-            raise ValidationError(f"Update failed: {e}")
-        except Exception as e:
-            await session.rollback()
-            raise DatabaseError(f"Update operation failed: {e}")
-    
-    async def delete(self, session: AsyncSession) -> None:
-        """Delete with proper error handling"""
-        try:
-            await session.delete(self)
-            await session.flush()
-        except Exception as e:
-            await session.rollback()
-            raise DatabaseError(f"Delete operation failed: {e}")
-    
-    async def refresh(self, session: AsyncSession) -> Self:
-        """Refresh instance from database with proper typing"""
-        await session.refresh(self)
-        return self
-    
-    def to_dict(self, exclude: Optional[set[str]] = None) -> Dict[str, Any]:
-        """Convert instance to dictionary with proper typing"""
-        exclude = exclude or set()
-        return {
-            column.name: getattr(self, column.name)
-            for column in self.__table__.columns
-            if column.name not in exclude
-        }
 
-# Enhanced utility functions with proper typing
 async def execute_with_retry(
     session: AsyncSession, 
     statement: Union[Select[Any], Update, Delete], 

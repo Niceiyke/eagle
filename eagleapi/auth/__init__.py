@@ -13,9 +13,9 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import String, Boolean, select
-
 from ..db import BaseModel as DBBaseModel, get_db, Mapped, mapped_column
 from ..core.config import settings
+from ..admin import register_model_to_admin
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -72,6 +72,7 @@ class UserResponse(UserBase):
         from_attributes = True
 
 # === Database Model ===
+@register_model_to_admin
 class User(DBBaseModel):
     """User database model."""
     __tablename__ = "users"
@@ -82,7 +83,7 @@ class User(DBBaseModel):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
+    
 # === Utility Functions ===
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a hash."""
