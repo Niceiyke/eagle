@@ -56,18 +56,60 @@
                                    {% if item and item[field.name] %}checked{% endif %}>
                         </div>
                     {% elif filter.type == 'select' %}
-                        <select name="{{ field.name }}" id="{{ field.name }}" 
-                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                                {% if not field.nullable %}required{% endif %}>
-                            {% if not field.nullable %}
-                                <option value="">Select {{ field.name|title }}</option>
+                        {% if field.is_relationship %}
+                            {% if field.uselist %}
+                                <!-- Many-to-many relationship -->
+                                <select name="{{ field.name }}" id="{{ field.name }}" 
+                                        class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                        multiple
+                                        {% if not field.nullable %}required{% endif %}>
+                                    {% for option in filter.options %}
+                                        {% set is_selected = false %}
+                                        {% if item and item[field.name] %}
+                                            {% for rel_item in item[field.name] %}
+                                                {% if option.value == rel_item.id|string %}
+                                                    {% set is_selected = true %}
+                                                {% endif %}
+                                            {% endfor %}
+                                        {% endif %}
+                                        <option value="{{ option.value }}" {% if is_selected %}selected{% endif %}>
+                                            {{ option.display }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                                <p class="mt-1 text-xs text-gray-500">Hold Ctrl/Cmd to select multiple options</p>
+                            {% else %}
+                                <!-- Many-to-one relationship -->
+                                <select name="{{ field.name }}" id="{{ field.name }}" 
+                                        class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                        {% if not field.nullable %}required{% endif %}>
+                                    {% if field.nullable %}
+                                        <option value="">-- Select {{ field.name|title }} --</option>
+                                    {% endif %}
+                                    {% for option in filter.options %}
+                                        <option value="{{ option.value }}" 
+                                                {% if item and item[field.name] and option.value == item[field.name].id|string %}selected{% endif %}>
+                                            {{ option.display }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
                             {% endif %}
-                            {% for option in filter.options %}
-                                <option value="{{ option }}" {% if item and str(item[field.name]) == option %}selected{% endif %}>
-                                    {{ option }}
-                                </option>
-                            {% endfor %}
-                        </select>
+                        {% else %}
+                            <!-- Regular select field -->
+                            <select name="{{ field.name }}" id="{{ field.name }}" 
+                                    class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                    {% if not field.nullable %}required{% endif %}>
+                                {% if field.nullable %}
+                                    <option value="">-- Select {{ field.name|title }} --</option>
+                                {% endif %}
+                                {% for option in filter.options %}
+                                    <option value="{{ option.value }}" 
+                                            {% if item and item[field.name] and option.value == item[field.name]|string %}selected{% endif %}>
+                                        {{ option.display }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        {% endif %}
                     {% else %}
                         <input type="text" name="{{ field.name }}" id="{{ field.name }}" 
                                value="{{ item[field.name] if item else '' }}" 
@@ -105,13 +147,35 @@
 
 {% block scripts %}
 <script>
-    // Convert checkbox values to proper boolean values
+    // Handle form submission for checkboxes and multi-selects
     document.querySelectorAll('form').forEach(form => {
         form.addEventListener('submit', function(e) {
+            // Convert checkbox values to proper boolean values
             this.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
-                if (!checkbox.hasAttribute('checked') && !checkbox.checked) {
-                    checkbox.value = 'off';
+                if (!checkbox.checked) {
+                    // Only add the checkbox to the form data if it's not checked
+                    // This ensures the server knows to set the value to false
+                    const hiddenInput = document.createElement('input');
+                    hiddenInput.type = 'hidden';
+                    hiddenInput.name = checkbox.name;
+                    hiddenInput.value = 'off';
+                    checkbox.parentNode.insertBefore(hiddenInput, checkbox);
                 }
+            });
+
+            // Handle multi-select fields (many-to-many relationships)
+            this.querySelectorAll('select[multiple]').forEach(select => {
+                // Convert selected options to a comma-separated string
+                const selected = Array.from(select.selectedOptions).map(option => option.value);
+                
+                // Remove the original select from the form
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = select.name;
+                hiddenInput.value = selected.join(',');
+                
+                select.parentNode.insertBefore(hiddenInput, select);
+                select.name = ''; // Remove the original select from form data
             });
         });
     });
@@ -131,18 +195,19 @@
         });
     });
 
-    // JSON field validation
-    document.querySelectorAll('textarea[data-type="json"]').forEach(textarea => {
-        textarea.addEventListener('input', function() {
-            try {
-                JSON.parse(this.value);
-                this.classList.remove('border-red-500');
-                this.classList.add('border-green-500');
-            } catch (e) {
-                this.classList.remove('border-green-500');
-                this.classList.add('border-red-500');
-            }
+    // Initialize Select2 for better select controls (if available)
+    if (typeof $ !== 'undefined' && $.fn.select2) {
+        $('select[multiple]').select2({
+            width: '100%',
+            placeholder: 'Select options',
+            allowClear: true
         });
+    }
+
+    // Initialize tooltips
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
     });
 </script>
 {% endblock %}

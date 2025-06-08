@@ -27,6 +27,9 @@ T = TypeVar('T')
 # Set to track processed models to prevent infinite recursion
 _processed_models: Set[str] = set()
 
+# Dictionary to track enum mappings for consistent naming
+_enum_mappings: Dict[str, Dict[str, Any]] = {}
+
 @dataclass
 class TypeScriptConfig:
     """Configuration for TypeScript generation."""
@@ -112,7 +115,21 @@ def _snake_to_camel(snake_str: str) -> str:
     components = snake_str.split('_')
     return components[0] + ''.join(word.capitalize() for word in components[1:])
 
-def _get_ts_type(column_type: Any, config: Optional[TypeScriptConfig] = None) -> str:
+def _get_enum_name(model_name: str, column_name: str, enum_values: List[str]) -> str:
+    """Generate consistent enum names and track mappings."""
+    # Create a consistent enum name
+    enum_name = f"{model_name}{column_name.title()}Enum"
+    
+    # Store the mapping for later use in enum generation
+    enum_key = str(sorted(enum_values))  # Use sorted values as key for consistency
+    _enum_mappings[enum_key] = {
+        'name': enum_name,
+        'values': enum_values
+    }
+    
+    return enum_name
+
+def _get_ts_type(column_type: Any, config: Optional[TypeScriptConfig] = None, model_name: str = "", column_name: str = "") -> str:
     """Convert SQLAlchemy column type to TypeScript type."""
     config = config or TypeScriptConfig()
     
@@ -122,7 +139,7 @@ def _get_ts_type(column_type: Any, config: Optional[TypeScriptConfig] = None) ->
             
         # Handle SQLAlchemy type with impl
         if hasattr(column_type, 'impl'):
-            return _get_ts_type(column_type.impl, config)
+            return _get_ts_type(column_type.impl, config, model_name, column_name)
         
         # Handle Python built-in types
         if column_type in TYPE_MAPPING:
@@ -132,17 +149,17 @@ def _get_ts_type(column_type: Any, config: Optional[TypeScriptConfig] = None) ->
         if isinstance(column_type, (Numeric, Float)):
             return _get_numeric_type(column_type)
         
-        # Handle enums
+        # Handle enums - FIXED VERSION
         if hasattr(column_type, 'enums') and column_type.enums:
-            if config.generate_enums:
-                return f"EnumType_{hash(str(column_type.enums)) % 10000}"
+            if config.generate_enums and model_name and column_name:
+                return _get_enum_name(model_name, column_name, list(column_type.enums))
             else:
                 enum_values = " | ".join(f'"{v}"' for v in column_type.enums)
                 return enum_values
         
         # Handle arrays
         if hasattr(column_type, 'item_type'):
-            item_type = _get_ts_type(column_type.item_type, config)
+            item_type = _get_ts_type(column_type.item_type, config, model_name, column_name)
             return f"{item_type}[]"
         
         # Handle foreign keys
@@ -163,7 +180,7 @@ def _get_ts_type(column_type: Any, config: Optional[TypeScriptConfig] = None) ->
                 if len(args) == 2 and type(None) in args:
                     # Optional type
                     non_none_type = next(arg for arg in args if arg is not type(None))
-                    return f"{_get_ts_type(non_none_type, config)} | null"
+                    return f"{_get_ts_type(non_none_type, config, model_name, column_name)} | null"
         
         # Fallback to any for unknown types
         logger.warning(f"Unknown column type: {column_type}, defaulting to 'any'")
@@ -260,7 +277,8 @@ def _get_model_fields(model: Type[Any], config: Optional[TypeScriptConfig] = Non
             if hasattr(model, '__mapper__'):
                 for column in model.__mapper__.columns:
                     try:
-                        column_type = _get_ts_type(column.type, config)
+                        # Pass model_name and column_name for proper enum handling
+                        column_type = _get_ts_type(column.type, config, model_name, column.name)
                         field_name = column.name
                         if config.camel_case_fields:
                             field_name = _snake_to_camel(field_name)
@@ -272,7 +290,8 @@ def _get_model_fields(model: Type[Any], config: Optional[TypeScriptConfig] = Non
             elif hasattr(model, '__table__') and model.__table__ is not None:
                 for column in model.__table__.columns:
                     try:
-                        column_type = _get_ts_type(column.type, config)
+                        # Pass model_name and column_name for proper enum handling
+                        column_type = _get_ts_type(column.type, config, model_name, column.name)
                         field_name = column.name
                         if config.camel_case_fields:
                             field_name = _snake_to_camel(field_name)
@@ -295,6 +314,28 @@ def _get_model_fields(model: Type[Any], config: Optional[TypeScriptConfig] = Non
             logger.error(f"Error getting fields for model {model_name}: {str(e)}")
     
     return fields
+
+def _generate_enum_types_from_mappings() -> str:
+    """Generate TypeScript enums from collected enum mappings."""
+    if not _enum_mappings:
+        return ""
+    
+    output = ["// Generated Enums"]
+    
+    # Use the collected mappings instead of scanning models again
+    for enum_info in _enum_mappings.values():
+        enum_name = enum_info['name']
+        values = enum_info['values']
+        
+        output.append(f"export enum {enum_name} {{")
+        for value in values:
+            # Handle special characters in enum values
+            key = re.sub(r'[^a-zA-Z0-9_]', '_', str(value).upper())
+            output.append(f"  {key} = '{value}',")
+        output.append("}")
+        output.append("")
+    
+    return "\n".join(output)
 
 def _generate_enum_types(models: List[Type[Any]]) -> str:
     """Generate TypeScript enums from SQLAlchemy enum columns."""
@@ -596,9 +637,10 @@ def generate_typescript_definitions(
     config = config or TypeScriptConfig()
     models = models or get_all_models()
     
-    # Reset processed models set
-    global _processed_models
+    # Reset processed models set AND enum mappings
+    global _processed_models, _enum_mappings
     _processed_models.clear()
+    _enum_mappings.clear()
     
     # Validate models
     valid_models = [m for m in models if validate_model(m)]
@@ -611,12 +653,7 @@ def generate_typescript_definitions(
     if config.include_utility_types:
         output_parts.append(generate_utility_types())
     
-    if config.generate_enums:
-        enum_types = _generate_enum_types(valid_models)
-        if enum_types:
-            output_parts.append(enum_types)
-    
-    # Generate model interfaces
+    # Generate model interfaces first to collect enum mappings
     model_outputs = []
     for model in valid_models:
         try:
@@ -627,6 +664,12 @@ def generate_typescript_definitions(
         except Exception as e:
             logger.error(f"Failed to generate interface for {model.__name__}: {e}")
             continue
+    
+    # Now generate enums from collected mappings
+    if config.generate_enums:
+        enum_types = _generate_enum_types_from_mappings()
+        if enum_types:
+            output_parts.append(enum_types)
     
     if model_outputs:
         output_parts.append("\n".join(model_outputs))

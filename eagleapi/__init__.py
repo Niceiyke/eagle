@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from .db import db, get_db
 from .db.migrations import migration_manager,MigrationError
-from .auth import User, get_current_superuser
+from .auth import AuthUser, get_current_superuser,AuthProvider
 from .middleware import MiddlewareManager
 from .utils.routes import router as utils_router
 import asyncio
@@ -58,7 +58,7 @@ class EagleAPI(FastAPI):
         
         @self.get("/migrations/status", include_in_schema=True)
         async def migration_status(
-            current_user: User = Depends(get_current_superuser)
+            current_user: AuthUser = Depends(get_current_superuser)
         ):
             """Get migration status (superuser only)"""
             try:
@@ -71,7 +71,7 @@ class EagleAPI(FastAPI):
         
         @self.get("/migrations/history", include_in_schema=True)
         async def migration_history(
-            current_user: User = Depends(get_current_superuser)
+            current_user: AuthUser = Depends(get_current_superuser)
         ):
             """Get migration history (superuser only)"""
             try:
@@ -95,7 +95,7 @@ class EagleAPI(FastAPI):
         @self.post("/migrations/upgrade", include_in_schema=True)
         async def upgrade_migrations(
             revision: str = "head",
-            current_user: User = Depends(get_current_superuser)
+            current_user: AuthUser = Depends(get_current_superuser)
         ):
             """Upgrade migrations (superuser only)"""
             try:
@@ -114,7 +114,7 @@ class EagleAPI(FastAPI):
         async def create_migration(
             revision: str,
             description: str,
-            current_user: User = Depends(get_current_superuser)
+            current_user: AuthUser = Depends(get_current_superuser)
         ):
             """Create a new migration (superuser only)"""
             try:
@@ -259,9 +259,16 @@ class EagleAPI(FastAPI):
                         'username': 'admin',
                         'email': settings.SUPERUSER_EMAIL,
                         'password': settings.SUPERUSER_PASSWORD,
+                        'confirm_password': settings.SUPERUSER_PASSWORD,  # Add confirm_password
                         'is_superuser': True,
                         'is_active': True,
-                        'full_name': 'Admin User'
+                        'is_verified': True,
+                        'auth_provider': AuthProvider.LOCAL,
+                        'social_id': None,
+                        'last_login': None,
+                        'failed_login_attempts': 0,
+                        'locked_until': None,
+                        'full_name': 'Admin AuthUser'
                     }
                     user_in = UserCreate(**user_data)
                     await create_user(db, user_in)
@@ -492,7 +499,7 @@ def create_app(
 
         
         @app.get("/health", include_in_schema=True)
-        async def health_check(current_user: User = Depends(get_current_superuser)):
+        async def health_check(current_user: AuthUser = Depends(get_current_superuser)):
             """Health check endpoint."""
             health_status = {
                 "status": "ok",

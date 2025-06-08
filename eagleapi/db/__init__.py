@@ -23,12 +23,12 @@ from functools import wraps
 # Re-export core components
 from .models.base import Base, TimestampMixin, SoftDeleteMixin
 from .models.mixins import CRUDMixin
-from .schemas import SchemaGenerator, SchemaTypeEnum
 from .session import Database, db, get_db
 from .exceptions import (
     DatabaseError, ConnectionError, ValidationError, 
     QueryError, NotFoundError, IntegrityError, MigrationError, TimeoutError
 )
+from .schemas import SchemaConfig,generate_schema
 from .types import (
     ModelType, SchemaType, ColumnType, FilterDict, SchemaCache,
     PaginationResult, SortDirection, JoinType, FilterOperator, FilterCondition
@@ -72,7 +72,7 @@ __all__ = [
     'TimestampMixin', 'SoftDeleteMixin', 'CRUDMixin',
     
     # Schemas
-    'SchemaGenerator', 'SchemaTypeEnum', 'PydanticBaseModel',
+    'SchemaConfig', 'generate_schema', 'PydanticBaseModel',
     
     # Exceptions
     'DatabaseError', 'ConnectionError', 'ValidationError', 
@@ -96,151 +96,6 @@ __all__ = [
 # For backward compatibility
 BaseModel = Base  # Alias for backward compatibility
 
-class SchemaGenerator:
-    """Enhanced schema generator with comprehensive type hints"""
-    
-    def __init__(self, max_cache_size: int = 1000) -> None:
-        self._schema_cache: SchemaCache = {}
-        self._max_cache_size: Final[int] = max_cache_size
-        self._logger: logging.Logger = logging.getLogger(__name__)
-    
-    def generate_schema(
-        self, 
-        model_class: Type[ModelType], 
-        schema_type: SchemaTypeEnum
-    ) -> Type[PydanticBaseModel]:
-        """Generate a specific schema type for a model with enhanced error handling"""
-        
-        model_name: str = model_class.__name__
-        cache_key: str = f"{model_name}_{schema_type.value}"
-        
-        if cache_key in self._schema_cache:
-            return self._schema_cache[cache_key]
-        
-        # Prevent unbounded cache growth
-        if len(self._schema_cache) >= self._max_cache_size:
-            self._evict_oldest_cache_entry()
-        
-        try:
-            schema_class = self._create_schema(model_class, schema_type)
-            self._schema_cache[cache_key] = schema_class
-            return schema_class
-        except Exception as e:
-            self._logger.error(
-                f"Failed to generate schema for {model_name} ({schema_type}): {e}"
-            )
-            raise ValidationError(f"Schema generation failed: {e}", context={
-                "model": model_name,
-                "schema_type": schema_type.value
-            })
-    
-    def _evict_oldest_cache_entry(self) -> None:
-        """Remove oldest cache entry (simple FIFO)"""
-        if self._schema_cache:
-            oldest_key = next(iter(self._schema_cache))
-            del self._schema_cache[oldest_key]
-    
-    def _create_schema(
-        self, 
-        model_class: Type[ModelType], 
-        schema_type: SchemaTypeEnum
-    ) -> Type[PydanticBaseModel]:
-        """Create the actual Pydantic schema with proper typing"""
-        
-        schema_name: str = f"{model_class.__name__}{schema_type.value.title()}Schema"
-        
-        try:
-            mapper = sa_inspect(model_class)
-        except Exception as e:
-            raise ValidationError(f"Cannot inspect model {model_class.__name__}: {e}")
-        
-        field_definitions: Dict[str, tuple[Type[Any], Any]] = {}
-        
-        for column in mapper.columns:
-            field_name: str = column.name
-            
-            if self._should_skip_field(field_name, schema_type):
-                continue
-                
-            try:
-                python_type = self._sqlalchemy_to_python_type(column.type)
-                is_optional = self._is_field_optional(column, schema_type)
-                
-                if is_optional:
-                    field_definitions[field_name] = (Optional[python_type], Field(default=None))
-                else:
-                    field_definitions[field_name] = (python_type, Field())
-                    
-            except Exception as e:
-                self._logger.warning(
-                    f"Skipping field {field_name} in {model_class.__name__}: {e}"
-                )
-                continue
-        
-        if not field_definitions:
-            raise ValidationError(f"No valid fields found for schema {schema_name}")
-        
-        return create_model(
-            schema_name,
-            **field_definitions,
-            __config__=ConfigDict(
-                from_attributes=True,
-                validate_assignment=True,
-                arbitrary_types_allowed=True,
-                str_strip_whitespace=True,
-                validate_default=True,
-                frozen=schema_type == SchemaTypeEnum.RESPONSE  # Immutable response schemas
-            )
-        )
-    
-    def _should_skip_field(self, field_name: str, schema_type: SchemaTypeEnum) -> bool:
-        """Enhanced logic for field skipping with type safety"""
-        skip_patterns: Dict[SchemaTypeEnum, set[str]] = {
-            SchemaTypeEnum.CREATE: {'id', 'created_at', 'updated_at'},
-            SchemaTypeEnum.UPDATE: {'id', 'created_at'},
-            SchemaTypeEnum.LIST: set(),  # Include all fields for list view
-            SchemaTypeEnum.RESPONSE: set(),  # Include all fields for response
-            SchemaTypeEnum.PARTIAL: set()  # Include all fields but make optional
-        }
-        
-        return field_name in skip_patterns.get(schema_type, set())
-    
-    def _is_field_optional(self, column: Any, schema_type: SchemaTypeEnum) -> bool:
-        """Enhanced field optionality logic with type safety"""
-        if schema_type in {SchemaTypeEnum.UPDATE, SchemaTypeEnum.PARTIAL}:
-            return True
-        
-        return bool(
-            column.nullable or 
-            column.default is not None or 
-            column.server_default is not None or
-            getattr(column, 'autoincrement', False)
-        )
-    
-    def _sqlalchemy_to_python_type(self, sql_type: Any) -> Type[Any]:
-        """Enhanced type conversion with comprehensive mapping"""
-        type_mapping: Dict[Type[Any], Type[Any]] = {
-            SQLInteger: int,
-            SQLString: str,
-            Text: str,
-            SQLBoolean: bool,
-            Float: float,
-            SQLDateTime: datetime,
-            JSON: dict,
-        }
-        
-        for sql_class, python_type in type_mapping.items():
-            if isinstance(sql_type, sql_class):
-                return python_type
-                
-        if isinstance(sql_type, SQLEnum):
-            return str
-        if isinstance(sql_type, ARRAY):
-            return list
-        
-        # Log unknown types for debugging
-        self._logger.debug(f"Unknown SQLAlchemy type: {sql_type}, defaulting to Any")
-        return Any
 
 def retry_on_db_error(
     max_retries: int = 3, 
@@ -454,8 +309,7 @@ class Database:
             self._logger.error(f"Failed to setup database: {e}")
             raise DatabaseError(f"Database setup failed: {e}")
 
-# Global instances with proper typing
-_schema_generator: SchemaGenerator = SchemaGenerator()
+
 db: Database = Database()
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -498,29 +352,21 @@ class BaseModel(Base, CRUDMixin, Generic[ModelType]):
     
     # Schema generation methods with proper return types
     @classmethod
-    def get_create_schema(cls) -> Type[PydanticBaseModel]:
+    def get_create_schema(cls,config:SchemaConfig=None) -> Type[PydanticBaseModel]:
         """Get creation schema with proper typing"""
-        return _schema_generator.generate_schema(cls, SchemaTypeEnum.CREATE)
+        return generate_schema(cls, mode="create",config=config)
     
     @classmethod
-    def get_update_schema(cls) -> Type[PydanticBaseModel]:
+    def get_update_schema(cls,config:SchemaConfig=None) -> Type[PydanticBaseModel]:
         """Get update schema with proper typing"""
-        return _schema_generator.generate_schema(cls, SchemaTypeEnum.UPDATE)
+        return generate_schema(cls, mode="update",config=config)
     
     @classmethod
-    def get_response_schema(cls) -> Type[PydanticBaseModel]:
+    def get_response_schema(cls,config:SchemaConfig=None) -> Type[PydanticBaseModel]:
         """Get response schema with proper typing"""
-        return _schema_generator.generate_schema(cls, SchemaTypeEnum.RESPONSE)
+        return generate_schema(cls, mode="response",config=config)
     
-    @classmethod
-    def get_list_schema(cls) -> Type[PydanticBaseModel]:
-        """Get list schema with proper typing"""
-        return _schema_generator.generate_schema(cls, SchemaTypeEnum.LIST)
-    
-    @classmethod
-    def get_partial_schema(cls) -> Type[PydanticBaseModel]:
-        """Get partial update schema with proper typing"""
-        return _schema_generator.generate_schema(cls, SchemaTypeEnum.PARTIAL)
+
     
 
 async def execute_with_retry(
@@ -547,8 +393,6 @@ def inspect_model_schemas(model_class: Type[BaseModel[Any]]) -> None:
             'create': model_class.get_create_schema,
             'update': model_class.get_update_schema,
             'response': model_class.get_response_schema,
-            'list': model_class.get_list_schema,
-            'partial': model_class.get_partial_schema
         }
         
         for schema_type, schema_method in schema_methods.items():

@@ -2,11 +2,10 @@
 Database schema definitions and generators.
 """
 
-from .base import BaseSchema
-from .generator import SchemaGenerator, SchemaTypeEnum
+
+from .generator import SchemaConfig,generate_schema
 
 __all__ = [
-    'BaseSchema',
-    'SchemaGenerator',
-    'SchemaTypeEnum',
+    'SchemaConfig',
+    'generate_schema',
 ]

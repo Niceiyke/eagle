@@ -95,7 +95,48 @@
                 <tr class="hover:bg-gray-50">
                     {% for field in fields %}
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {{ item[field]|default('') }}
+                        {% set field_info = model_info.fields|selectattr('name', 'equalto', field)|first %}
+                        {% if field_info and field_info.is_relationship %}
+                            {% if field_info.uselist %}
+                                {# Handle to-many relationships (one-to-many, many-to-many) #}
+                                {% set related_items = item[field] %}
+                                {% if related_items is iterable and related_items is not string %}
+                                    {% for rel_item in related_items %}
+                                        {% if rel_item %}
+                                            {% if field_info.related_pk and hasattr(rel_item, field_info.related_pk) %}
+                                                {{ getattr(rel_item, field_info.related_pk) }}
+                                            {% else %}
+                                                {{ rel_item }}
+                                            {% endif %}
+                                            {% if not loop.last %}, {% endif %}
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="text-gray-400">-</span>
+                                    {% endfor %}
+                                {% else %}
+                                    <span class="text-gray-400">-</span>
+                                {% endif %}
+                            {% else %}
+                                {# Handle to-one relationships (many-to-one, one-to-one) #}
+                                {% set related_item = item[field] %}
+                                {% if related_item %}
+                                    {% if field_info.related_pk and hasattr(related_item, field_info.related_pk) %}
+                                        {{ getattr(related_item, field_info.related_pk) }}
+                                    {% else %}
+                                        {{ related_item }}
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-gray-400">-</span>
+                                {% endif %}
+                            {% endif %}
+                        {% else %}
+                            {# Regular field #}
+                            {% if field in item and item[field] is not none %}
+                                {{ item[field] }}
+                            {% else %}
+                                <span class="text-gray-400">-</span>
+                            {% endif %}
+                        {% endif %}
                     </td>
                     {% endfor %}
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
