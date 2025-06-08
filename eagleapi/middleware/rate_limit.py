@@ -6,6 +6,13 @@ from starlette.responses import Response, JSONResponse
 from typing import Dict
 import time
 import asyncio
+import logging as log
+
+
+log.basicConfig(level=log.INFO)
+
+logger = log.getLogger("eagle.ratelimit-middleware")
+
 
 class RateLimitMiddleware(EagleMiddleware):
     """Simple in-memory rate limiting middleware."""

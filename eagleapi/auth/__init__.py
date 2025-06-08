@@ -23,6 +23,7 @@ from ..db import BaseModel as DBBaseModel, get_db, Mapped, mapped_column,Foreign
 from ..core.config import settings
 from ..admin import register_model_to_admin
 
+
 # === Enums ===
 class AuthProvider(str, Enum):
     """Authentication providers."""

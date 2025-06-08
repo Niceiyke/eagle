@@ -17,11 +17,16 @@ from pathlib import Path
 from .db import db, get_db
 from .db.migrations import migration_manager,MigrationError
 from .auth import AuthUser, get_current_superuser,AuthProvider
+from .admin import AdminApp
 from .middleware import MiddlewareManager
 from .utils.routes import router as utils_router
 import asyncio
 import sys
 from .core.config import settings
+from .tasks.background import BackgroundTaskQueue
+
+# Global background task queue instance
+background_tasks = BackgroundTaskQueue()
 
 
 # Configure logging
@@ -138,11 +143,12 @@ class EagleAPI(FastAPI):
         
         # Include utility routes
         self.include_router(utils_router)
+
+        admin_app = AdminApp()
+        self.include_router(admin_app.router,include_in_schema=False)
+
+
         
-        # Set up admin dashboard
-        self._admin = None
-        if settings.ADMIN_ENABLED:
-            self.enable_admin()
     
     def _setup_middlewares(self):
         """Configure and apply middlewares based on configuration."""
@@ -294,36 +300,7 @@ class EagleAPI(FastAPI):
         except Exception as e:
             self.logger.error(f"Error during application shutdown: {e}", exc_info=True)
 
-    @property
-    def admin(self):
-        """Get the admin interface instance."""
-        if self._admin is None:
-            raise RuntimeError("Admin interface is not enabled. Call enable_admin() first.")
-        return self._admin
-    
-    def enable_admin(self, path: str = None) -> 'Admin':
-        """
-        Enable the admin interface.
-        
-        Args:
-            path: The URL path where the admin dashboard will be mounted
-            
-        Returns:
-            The Admin instance
-        """
-        if self._admin is not None:
-            return self._admin
-            
-        from .admin import Admin
-        admin_path = path or settings.ADMIN_PATH
-        self._admin = Admin(self, path=admin_path)
-        return self._admin
-        
-    def disable_admin(self):
-        """Disable the admin interface."""
-        # Note: This won't remove already mounted routes, but will prevent new ones
-        self._admin = None
-
+  
     def enable_migrations(
             self, 
             migrations_dir: str = "migrations",
@@ -538,8 +515,12 @@ from fastapi.middleware import Middleware  # noqa
 from fastapi.middleware.cors import CORSMiddleware  # noqa
 from fastapi.middleware.trustedhost import TrustedHostMiddleware  # noqa
 from fastapi.middleware.gzip import GZipMiddleware  # noqa
+from eagleapi.tasks.background import BackgroundTaskQueue  # noqa
+
+background_tasks = BackgroundTaskQueue()
 
 __all__ = [
+    'background_tasks',
     'EagleAPI', 'create_app', 'Request', 'Response', 'Depends', 
     'HTTPException', 'status', 'APIRouter', 'BackgroundTasks', 'UploadFile', 
     'File', 'Form', 'Query', 'Path', 'Body', 'Header', 'Cookie'
