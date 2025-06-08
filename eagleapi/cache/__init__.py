@@ -303,7 +303,8 @@ class CacheManager:
     def _auto_select_backend(self, redis_url: Optional[str] = None) -> CacheBackend:
         """Automatically select the best available backend."""
         # Check environment variables
-        redis_url = redis_url or os.getenv('REDIS_URL') or os.getenv('CACHE_REDIS_URL')
+        from eagleapi.core.config import settings
+        redis_url = redis_url or settings.REDIS_URL
         
         # Try Redis first (production)
         if redis_url:

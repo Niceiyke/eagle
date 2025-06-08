@@ -141,7 +141,7 @@ class EagleAPI(FastAPI):
         
         # Set up admin dashboard
         self._admin = None
-        if os.getenv("EAGLE_ADMIN_ENABLED", "true").lower() == "true":
+        if settings.ADMIN_ENABLED:
             self.enable_admin()
     
     def _setup_middlewares(self):
@@ -315,7 +315,7 @@ class EagleAPI(FastAPI):
             return self._admin
             
         from .admin import Admin
-        admin_path = path or os.getenv("EAGLE_ADMIN_PATH", "/admin")
+        admin_path = path or settings.ADMIN_PATH
         self._admin = Admin(self, path=admin_path)
         return self._admin
         

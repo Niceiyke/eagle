@@ -34,12 +34,9 @@ class Database:
                          EAGLE_DATABASE_URL environment variable or default to SQLite.
             **kwargs: Additional keyword arguments passed to create_async_engine.
         """
-        self.database_url = database_url or os.getenv(
-            "EAGLE_DATABASE_URL", 
-            "sqlite+aiosqlite:///./eagle.db"
-        )
-        self.echo_sql = bool(kwargs.pop('echo_sql', False) or 
-                           os.getenv("EAGLE_ECHO_SQL", "").lower() in ("1", "true", "yes"))
+        from eagleapi.core.config import settings
+        self.database_url = database_url or settings.DATABASE_URL
+        self.echo_sql = bool(kwargs.pop('echo_sql', False) or settings.ECHO_SQL)
         self.engine: Optional[AsyncEngine] = None
         self.session_factory: Optional[async_sessionmaker[AsyncSession]] = None
         self._logger = logging.getLogger(__name__)

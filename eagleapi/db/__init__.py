@@ -142,12 +142,9 @@ class Database:
         database_url: Optional[str] = None, 
         **kwargs: Any
     ) -> None:
-        self.database_url: str = database_url or os.getenv(
-            "EAGLE_DATABASE_URL", 
-            "sqlite+aiosqlite:///./eagle.db"
-        )
-        self.echo_sql: bool = bool(kwargs.get('echo_sql', False) or 
-                                 os.getenv("EAGLE_ECHO_SQL", "").lower() in ("1", "true", "yes"))
+        from eagleapi.core.config import settings
+        self.database_url: str = database_url or settings.DATABASE_URL
+        self.echo_sql: bool = bool(kwargs.get('echo_sql', False) or settings.ECHO_SQL)
         self.engine: Optional[AsyncEngine] = None
         self.session_factory: Optional[async_sessionmaker[AsyncSession]] = None
         self._health_check_query: text = text("SELECT 1")
