@@ -14,10 +14,12 @@ This module provides a robust, production-ready database interface with:
 from __future__ import annotations
 import os
 import logging
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Type, TypeVar, Union, get_type_hints, cast
 from typing_extensions import ParamSpec, TypeVar, Callable, Final, Awaitable, Self, Mapping
 from datetime import datetime
-from sqlalchemy import func,select,update,delete,text,and_,or_
+from sqlalchemy import func, select, update, delete, text, and_, or_
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy import inspect as sa_inspect
 from functools import wraps
 # Re-export core components
@@ -30,16 +32,12 @@ from .exceptions import (
 )
 from .schemas import SchemaConfig,generate_schema
 from .types import (
-    ModelType, SchemaType, ColumnType, FilterDict, SchemaCache,
-    PaginationResult, SortDirection, JoinType, FilterOperator, FilterCondition
-)
+    ModelType, SchemaType, ColumnType, FilterDict, SchemaCache,PaginationResult)
 from .utils import (
-    retry_on_db_error, execute_with_retry, get_model_columns,
-    get_primary_key, model_to_dict, DatabaseTransaction
-)
+    retry_on_db_error, execute_with_retry, DatabaseTransaction)
 from .migrations import MigrationManager
 
-from pydantic import create_model
+
 
 # Type variables for generic typing
 T = TypeVar('T')
@@ -83,8 +81,7 @@ __all__ = [
     'PaginationResult', 'SortDirection', 'JoinType', 'FilterOperator', 'FilterCondition',
     
     # Utilities
-    'retry_on_db_error', 'execute_with_retry', 'get_model_columns',
-    'get_primary_key', 'model_to_dict', 'DatabaseTransaction',
+    'retry_on_db_error', 'execute_with_retry', 'DatabaseTransaction',
     
     # SQLAlchemy types and functions
     'AsyncSession', 'DeclarativeBase', 'declared_attr', 'Mapped', 
@@ -306,6 +303,50 @@ class Database:
             self._logger.error(f"Failed to setup database: {e}")
             raise DatabaseError(f"Database setup failed: {e}")
 
+    @asynccontextmanager
+    async def session(self):
+        """Async context manager for database sessions"""
+        if not self.session_factory:
+            raise ConnectionError("Database session factory not initialized")
+        
+        session = self.session_factory()
+        try:
+            yield session
+        except Exception as e:
+            # Only rollback if there's an active transaction
+            try:
+                if session.in_transaction():
+                    await session.rollback()
+            except Exception as rollback_error:
+                self._logger.warning(f"Error during rollback: {rollback_error}")
+            
+            # Re-raise the original exception with proper error handling
+            if isinstance(e, IntegrityError):
+                raise ValidationError(f"Data integrity error: {e}") from e
+            elif isinstance(e, SQLAlchemyError):
+                raise DatabaseError(f"Database error: {e}") from e
+            raise
+        finally:
+            # Enhanced session cleanup with proper state checking
+            try:
+                # Check if session is still valid before closing
+                if not session.is_active:
+                    return
+                
+                # If there's still an active transaction, make sure it's completed
+                if session.in_transaction():
+                    try:
+                        # Don't auto-commit here - let the caller handle transactions
+                        await session.rollback()
+                    except Exception as tx_error:
+                        self._logger.warning(f"Error rolling back transaction: {tx_error}")
+                
+                # Now safely close the session
+                await session.close()
+                
+            except Exception as close_error:
+                # Only log as debug since this is cleanup - don't fail the request
+                self._logger.debug(f"Session cleanup warning: {close_error}")
 
 db: Database = Database()
 

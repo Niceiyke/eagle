@@ -7,7 +7,7 @@ from typing import Optional, List
 import logging
 
 logger = logging.getLogger("eagle.middleware.auth")
-
+    
 class AuthMiddleware(EagleMiddleware):
     """Authentication middleware for protected routes."""
     

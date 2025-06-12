@@ -121,6 +121,8 @@ class LoggingMiddleware(EagleMiddleware):
     async def handle_exception(self, request: Request, exc: Exception) -> Response:
         """Handle and log exceptions."""
         if not getattr(request.state, 'skip_logging', True):
+            logger.error(f"Exception: {exc}")
+            print("Exception: ", request.url.path)
             asyncio.create_task(self._log_error_async(request, exc))
         
         return JSONResponse(
@@ -145,6 +147,20 @@ class LoggingMiddleware(EagleMiddleware):
                     await self._create_error_log(request, exc, db)
         except Exception as e:
             logger.error(f"Error logging failed: {e}")
+
+    async def _create_error_log(self, request: Request, exc: Exception, db: AsyncSession):
+        """Create an error log entry in the database."""
+        request_id = getattr(request.state, 'request_id', None)
+        log = Log(
+            level=LogLevel.ERROR,
+            message=f"Error: {str(exc)}",
+            request_id=request_id,
+            path=getattr(request.url, 'path', None),
+            method=getattr(request, 'method', None),
+            extra_data={}
+        )
+        db.add(log)
+        await db.commit()
     
     @asynccontextmanager
     async def _get_db_session(self):
@@ -161,7 +177,6 @@ class LoggingMiddleware(EagleMiddleware):
                 # Let the middleware handle commits explicitly
             else:
                 yield None
-                
         except Exception as e:
             logger.warning(f"DB session error: {e}")
             if session and session.in_transaction():
@@ -169,7 +184,7 @@ class LoggingMiddleware(EagleMiddleware):
                     await session.rollback()
                 except Exception:
                     pass
-            yield None
+            return
     
     async def _create_log_entries(self, request: Request, response: Response, db: AsyncSession):
         """Create log entries for request and response."""

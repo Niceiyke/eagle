@@ -41,6 +41,7 @@ class TaskQueue(BaseModel):
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    task_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
     def __repr__(self):
         return f"<TaskQueue id={self.id} status={self.status} func={self.func_name}>"
