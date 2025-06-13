@@ -9,207 +9,48 @@ authentication, admin interface, and more, while maintaining performance and dev
 __version__ = "0.1.0"
 
 from fastapi import FastAPI, Depends, HTTPException, status
-from typing import Optional, Dict, Any, List
 from sqlalchemy import text
-import os
 import logging
-from pathlib import Path
+import pathlib
 from .db import db, get_db
-from .db.migrations import migration_manager,MigrationError
 from .auth import AuthUser, get_current_superuser,AuthProvider
 from .admin import AdminApp
-from .middleware import MiddlewareManager
 from .utils.routes import router as utils_router
-import asyncio
-import sys
+from .migrations import MigrationManager
 from .core.config import settings
-from .tasks.background import BackgroundTaskQueue
+import asyncio
 
-# Global background task queue instance
-background_tasks = BackgroundTaskQueue()
-
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Initialize module-level logger; logging configuration is handled in `create_app`
 logger = logging.getLogger(__name__)
 
 
-    
+class MigrationConfig:
+        def __init__(self, database_url: str, environment: str = "development"):
+            self.DATABASE_URL = database_url
+            self.ENVIRONMENT = environment
+
     
 class EagleAPI(FastAPI):
     """Main application class for the Eagle framework."""
     
     def __init__(self, *args, **kwargs):
-        # Extract middleware config
-        self.middleware_config = kwargs.pop('middleware_config', {})
         super().__init__(*args, **kwargs)
         
         self.logger = logging.getLogger(__name__)
-        self.middleware_manager = MiddlewareManager()
         self._setup()
         self.add_event_handler("startup", self.on_startup)
         self.add_event_handler("shutdown", self.on_shutdown)
 
     
-    
-    def _setup_migration_endpoints(self):
-        """Add migration management endpoints"""
-        # Prevent duplicate endpoint registration
-        if hasattr(self, "_migration_endpoints_registered"):
-            return
-            
-        from .auth import get_current_superuser
-        from .db.migrations import get_migration_status, get_migration_history
-        
-        @self.get("/migrations/status", include_in_schema=True)
-        async def migration_status(
-            current_user: AuthUser = Depends(get_current_superuser)
-        ):
-            """Get migration status (superuser only)"""
-            try:
-                return get_migration_status()
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to get migration status: {e}"
-                )
-        
-        @self.get("/migrations/history", include_in_schema=True)
-        async def migration_history(
-            current_user: AuthUser = Depends(get_current_superuser)
-        ):
-            """Get migration history (superuser only)"""
-            try:
-                history = get_migration_history()
-                return [
-                    {
-                        "revision": m.revision,
-                        "description": m.description,
-                        "created_at": m.created_at.isoformat(),
-                        "is_head": m.is_head,
-                        "is_current": m.is_current
-                    }
-                    for m in history
-                ]
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to get migration history: {e}"
-                )
-        
-        @self.post("/migrations/upgrade", include_in_schema=True)
-        async def upgrade_migrations(
-            revision: str = "head",
-            current_user: AuthUser = Depends(get_current_superuser)
-        ):
-            """Upgrade migrations (superuser only)"""
-            try:
-                from .db.migrations import upgrade_database
-                await asyncio.get_event_loop().run_in_executor(
-                    None, upgrade_database, revision
-                )
-                return {"message": f"Upgraded to revision: {revision}"}
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Migration upgrade failed: {e}"
-                )
-        
-        @self.post("/migrations/create", include_in_schema=True)
-        async def create_migration(
-            revision: str,
-            description: str,
-            current_user: AuthUser = Depends(get_current_superuser)
-        ):
-            """Create a new migration (superuser only)"""
-            try:
-                from .db.migrations import create_migration
-                await asyncio.get_event_loop().run_in_executor(
-                    None, create_migration, revision, description
-                )
-                return {"message": f"Created migration: {revision}"}
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Migration creation failed: {e}"
-                )
-                
-        # Mark endpoints as registered
-        self._migration_endpoints_registered = True
     def _setup(self):
         """Set up the application with middleware and routes."""
-        # Configure and apply middlewares
-        self._setup_middlewares()
         
-        # Include utility routes
+        # Include utiliy routes
         self.include_router(utils_router)
 
         admin_app = AdminApp()
         self.include_router(admin_app.router,include_in_schema=False)
-
-
-        
-    
-    def _setup_middlewares(self):
-        """Configure and apply middlewares based on configuration."""
-        config = self.middleware_config
-        
-        # Configure logging middleware
-        logging_config = config.get('logging', {})
-        if logging_config.get('enabled', True):
-            self.middleware_manager.configure_logging(
-                enabled=True,
-                log_methods=logging_config.get('methods', ['POST', 'PUT', 'DELETE']),
-                excluded_paths=logging_config.get('excluded_paths', [
-                    '/health', '/metrics', '/docs', '/redoc', '/openapi.json'
-                ]),
-                log_request_body=logging_config.get('log_request_body', True),
-                log_response_body=logging_config.get('log_response_body', False),
-                max_body_size=logging_config.get('max_body_size', 10 * 1024),
-                batch_logging=logging_config.get('batch_logging', False)
-            )
-        
-        # Configure CORS middleware
-        cors_config = config.get('cors', {})
-        if cors_config.get('enabled', True):
-            self.middleware_manager.configure_cors(
-                enabled=True,
-                allow_origins=cors_config.get('origins', ["*"]),
-                allow_methods=cors_config.get('methods', ["*"]),
-                allow_credentials=cors_config.get('credentials', True)
-            )
-        
-        # Configure rate limiting if enabled
-        rate_limit_config = config.get('rate_limit', {})
-        if rate_limit_config.get('enabled', False):
-            self.middleware_manager.configure_rate_limit(
-                enabled=True,
-                calls=rate_limit_config.get('calls', 100),
-                period=rate_limit_config.get('period', 60)
-            )
-            
-        # # Configure caching if enabled
-        # cache_config = config.get('cache', {})
-        # if cache_config.get('enabled', False):
-        #     self.middleware_manager.add_middleware(
-        #         'cache',
-        #         default_ttl=cache_config.get('default_ttl', 300),
-        #         cache_methods=cache_config.get('methods', ['GET']),
-        #         cache_status_codes=cache_config.get('status_codes', [200]),
-        #         excluded_paths=cache_config.get('excluded_paths', [
-        #             '/admin', '/docs', '/redoc', '/openapi.json'
-        #         ]),
-        #         vary_headers=cache_config.get('vary_headers', ['Authorization'])
-        #     )
-        
-        # Apply all middlewares to the app
-        try:
-            self.middleware_manager.apply_to_app(self)
-            self.logger.info("All middlewares applied successfully")
-        except Exception as e:
-            self.logger.error(f"Error applying middlewares: {e}")
-            raise
-    
+  
     async def on_startup(self):
         """Handle application startup with migrations."""
         self.logger.info("Starting up Eagle application...")
@@ -217,34 +58,92 @@ class EagleAPI(FastAPI):
         try:
             self.logger.info("Initializing database connection...")
             
-            # Auto-migrate if enabled
-            auto_migrate = getattr(self, '_auto_migrate', True)
-            
-            # Only create initial migration if no migrations exist
-            try:
-                current_rev = migration_manager.current()
-                if current_rev is None:
-                    self.logger.info("No existing migrations found, creating initial migration")
-                    migration_manager.create_migration("Initial migration")
-                else:
-                    self.logger.info(f"Existing migrations found, current revision: {current_rev}")
-            except Exception as e:
-                self.logger.warning(f"Could not check for existing migrations: {e}")
-                if auto_migrate:
-                    self.logger.info("Creating initial migration")
-                    migration_manager.create_migration("Initial migration")
-            
-            
-            
-            self.logger.info("Database setup completed")
+            # Run database migrations in background thread to avoid blocking
+            await asyncio.to_thread(self._run_migrations)
             
             # Create superuser
-            await self._create_initial_superuser()
+            #await self._create_initial_superuser()
             
         except Exception as e:
             self.logger.error(f"Error during startup: {e}")
             raise
     
+    def _run_migrations(self):
+        """Initialize and apply database migrations during startup.
+        
+        This method will:
+        1. Check if migrations are enabled
+        2. Check if migrations directory exists
+        3. Initialize migrations if they don't exist
+        4. Apply pending migrations if auto_migrate is True
+        """
+        # Access settings stored in app state (set during create_app)
+        enable_migrations = getattr(self.state, "enable_migrations", False)
+        if not enable_migrations:
+            self.logger.info("Database migrations are disabled")
+            return
+
+        logger = self.logger
+        debug = getattr(self.state, "debug_mode", False)
+        migrations_dir = getattr(self.state, "migrations_dir", "migrations")
+        auto_migrate = getattr(self.state, "auto_migrate", True)
+
+        logger.info("Checking database migrations...",
+                   extra={"debug": debug, "migrations_dir": migrations_dir, "auto_migrate": auto_migrate})
+
+        try:
+            # Lazy imports to avoid circular dependencies at module import time
+            from .core.config import settings  # local import to prevent issues
+
+            # Create migrations directory if it doesn't exist
+            path_dir = pathlib.Path(migrations_dir)
+            path_dir.mkdir(parents=True, exist_ok=True)
+
+            migration_config = MigrationConfig(
+                database_url=str(settings.DATABASE_URL),
+                environment="development" if debug else "production",
+            )
+
+            # Initialize migration manager
+            migration_manager = MigrationManager(
+                config=migration_config,
+                migrations_dir=migrations_dir,
+                require_backup=not debug,
+            )
+            logger.info("Migration manager initialized")
+
+            # Check if migrations are already initialized by looking for alembic.ini
+            migrations_initialized = (path_dir / "alembic.ini").exists()
+
+            if not migrations_initialized:
+                logger.info("Initializing new migration environment")
+                migration_manager.init(description="Initial database migration")
+                
+                logger.info("Creating initial migration")
+                migration_manager.create_migration("Initial migration")
+                logger.info("Successfully initialized migrations")
+            else:
+                logger.info("Existing migrations found")
+                # Ensure versions directory contains at least one migration script
+                versions_dir = path_dir / "versions"
+                if not versions_dir.exists() or not any(versions_dir.glob("*.py")):
+                    logger.warning("No migration scripts found; creating baseline migration")
+                    migration_manager.create_migration("Baseline migration")
+
+            if auto_migrate:
+                logger.info("Applying pending migrations...")
+                migration_manager.upgrade()
+                logger.info("Database migrations applied successfully")
+
+            # Store manager for later use
+            self.state.migration_manager = migration_manager
+
+        except Exception as e:
+            logger.error(f"Failed to initialize migrations: {e}")
+            if debug:
+                raise
+            logger.warning("Continuing without database migrations")
+
     async def _create_initial_superuser(self):
         """Create initial superuser if it doesn't exist."""
         from .auth import get_user_by_email, create_user, UserCreate
@@ -289,7 +188,6 @@ class EagleAPI(FastAPI):
             self.logger.error(f"Error creating initial superuser: {e}")
             raise
             
-
     async def on_shutdown(self):
         """Handle application shutdown events."""
         self.logger.info("Shutting down Eagle application...")
@@ -299,72 +197,8 @@ class EagleAPI(FastAPI):
                 
         except Exception as e:
             self.logger.error(f"Error during application shutdown: {e}", exc_info=True)
-
-  
-    def enable_migrations(
-            self, 
-            migrations_dir: str = "migrations",
-            auto_migrate: bool = True
-        ):
-        print("Enabling migrations...", settings.DATABASE_URL)
-        """
-        Enable database migrations.
-        
-        This method initializes the migrations directory and sets up Alembic configuration.
-        If the migrations directory doesn't exist, it will be created along with the
-        necessary Alembic configuration files.
-        
-        Args:
-            migrations_dir: Directory to store migration files (relative to the project root)
-            auto_migrate: Whether to auto-run migrations on startup
-            
-        Returns:
-            MigrationManager instance
-            
-        Raises:
-            MigrationError: If there's an error initializing the migrations
-        """
-        from pathlib import Path
-        from .db.migrations import migration_manager
-        
-        try:
-            # Convert to absolute path and ensure directory exists
-            migrations_path = Path(migrations_dir).absolute()
-            self.logger.info(f"Configuring migrations in: {migrations_path}")
-            
-            # Ensure the directory exists
-            migrations_path.mkdir(parents=True, exist_ok=True)
-            
-            # Set the migrations directory before initializing
-            migration_manager.migrations_dir = migrations_path
-            
-            # Initialize the migrations directory if it's empty
-            if not any(file for file in migrations_path.iterdir() if file.name != '__pycache__'):
-                self.logger.info(f"Initializing new migrations directory: {migrations_path}")
-                if not migration_manager.init("Initial migration setup"):
-                    self.logger.warning("Migrations directory already contains files, skipping initialization")
-            
-            self._auto_migrate = auto_migrate
-            
-            # Ensure the migrations directory is in Python path
-            migrations_parent = str(migrations_path.parent)
-            if migrations_parent not in sys.path:
-                sys.path.insert(0, migrations_parent)
-            
-            # Add migration endpoints
-            self._setup_migration_endpoints()
-            
-            self.logger.info(f"Database migrations enabled in {migrations_path}")
-            
-            if auto_migrate:
-                self.logger.info("Auto-migration is enabled and will run on startup")
-                
-        except Exception as e:
-            error_msg = f"Failed to enable migrations: {str(e)}"
-            self.logger.error(error_msg, exc_info=True)
-            raise MigrationError(error_msg) from e
-            
-        return migration_manager
+ 
+   
 
 def create_app(
     title: str = "Eagle Framework",
@@ -374,7 +208,6 @@ def create_app(
     redoc_url: str = "/redoc",
     openapi_url: str = "/openapi.json",
     debug: bool = False,
-    middleware_config: Optional[Dict[str, Any]] = None,
     enable_migrations: bool = True,
     migrations_dir: str = "migrations",
     auto_migrate: bool = True,
@@ -425,21 +258,6 @@ def create_app(
     )
     
     logger = logging.getLogger(__name__)
-
-    # Set default middleware config
-    default_middleware_config = {
-        "logging": {"enabled": True},
-        "cors": {"enabled": True},
-        "rate_limit": {"enabled": False}
-    }
-    
-    if middleware_config:
-        # Merge with defaults
-        for key, value in middleware_config.items():
-            if key in default_middleware_config:
-                default_middleware_config[key].update(value)
-            else:
-                default_middleware_config[key] = value
     
     try:
         logger.info(f"Creating {title} application (version: {version})")
@@ -453,17 +271,15 @@ def create_app(
             redoc_url=redoc_url,
             openapi_url=openapi_url,
             debug=debug,
-            middleware_config=default_middleware_config,
             **kwargs
         )
         
-        # Enable migrations if requested
-        if enable_migrations:
-            app.enable_migrations(
-                migrations_dir=migrations_dir,
-                auto_migrate=auto_migrate
-            )
-            
+        # Store migration configuration in app state for use during startup
+        app.state.enable_migrations = enable_migrations
+        app.state.migrations_dir = migrations_dir
+        app.state.auto_migrate = auto_migrate
+        app.state.debug_mode = debug
+        
         # Import and include API routers
         try:
             from .auth import router as auth_router
@@ -515,13 +331,11 @@ from fastapi.middleware import Middleware  # noqa
 from fastapi.middleware.cors import CORSMiddleware  # noqa
 from fastapi.middleware.trustedhost import TrustedHostMiddleware  # noqa
 from fastapi.middleware.gzip import GZipMiddleware  # noqa
-from eagleapi.tasks.background import BackgroundTaskQueue  # noqa
-
-background_tasks = BackgroundTaskQueue()
+from .core.config import settings
+from .tasks.background import BackgroundTaskQueue
 
 __all__ = [
-    'background_tasks',
     'EagleAPI', 'create_app', 'Request', 'Response', 'Depends', 
     'HTTPException', 'status', 'APIRouter', 'BackgroundTasks', 'UploadFile', 
-    'File', 'Form', 'Query', 'Path', 'Body', 'Header', 'Cookie'
+    'File', 'Form', 'Query', 'Path', 'Body', 'Header', 'Cookie','settings','MigrationError'
 ]

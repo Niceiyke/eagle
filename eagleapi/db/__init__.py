@@ -35,8 +35,7 @@ from .types import (
     ModelType, SchemaType, ColumnType, FilterDict, SchemaCache,PaginationResult)
 from .utils import (
     retry_on_db_error, execute_with_retry, DatabaseTransaction)
-from .migrations import MigrationManager
-
+from  eagleapi.migrations import MigrationManager
 
 
 # Type variables for generic typing
@@ -131,6 +130,9 @@ def retry_on_db_error(
         return wrapper
     return decorator
 
+
+
+
 class Database:
     """Enhanced database connection and session management with comprehensive typing"""
     
@@ -147,10 +149,6 @@ class Database:
         self._health_check_query: text = text("SELECT 1")
         self._logger: logging.Logger = logging.getLogger(__name__)
         self._setup_engine(**kwargs)
-        self.migration_manager = MigrationManager(
-            database_url=self.database_url,
-            migrations_dir=kwargs.get('migrations_dir', 'migrations')
-        )
     
     def _validate_database_url(self, url: str) -> None:
         """Validate database URL format with enhanced checks"""
@@ -269,40 +267,16 @@ class Database:
                 # Only log as debug since this is cleanup - don't fail the request
                 self._logger.debug(f"Session cleanup warning: {close_error}")
 
-    async def auto_migrate(self) -> None:
-        """Automatically run pending migrations on startup"""
-        try:
-            upgraded = await self.migration_manager.auto_upgrade()
-            if upgraded:
-                self._logger.info("Database migrations applied successfully")
-        except Exception as e:
-            self._logger.error(f"Migration failed: {e}")
-            raise
     
     async def create_tables(self, auto_migrate: bool = True) -> None:
         """Create tables with optional auto-migration"""
         if not self.engine:
             raise ConnectionError("Database engine not initialized")
             
-        self._logger.info("Setting up database schema...")
-        
-        try:
-            # Check if migrations directory exists
-            if auto_migrate and self.migration_manager.migrations_dir.exists():
-                print("Auto-migrating database...")
-                # Use migrations
-                await self.auto_migrate()
-            else:
-                print("Auto-migration not enabled or migrations directory does not exist. Creating tables...")
-                # Fallback to direct table creation
-                async with self.engine.begin() as conn:
-                    await conn.run_sync(Base.metadata.create_all)
-                self._logger.info("Database tables created successfully")
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        self._logger.info("Database tables created successfully")
                 
-        except Exception as e:
-            self._logger.error(f"Failed to setup database: {e}")
-            raise DatabaseError(f"Database setup failed: {e}")
-
     @asynccontextmanager
     async def session(self):
         """Async context manager for database sessions"""
