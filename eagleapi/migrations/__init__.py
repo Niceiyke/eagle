@@ -162,11 +162,15 @@ class MigrationManager:
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         
         # Convert async URL to sync URL for Alembic
+        self.logger.info("Converting async database URL to sync URL")
         self.sync_database_url = self._convert_to_sync_url(config.DATABASE_URL)
+        self.logger.info("converted database URL: %s", self.sync_database_url)
+       
         
         # Validate configuration
+        self.logger.info("Validating configuration")
         self._validate_configuration()
-    
+        self.logger.info("Configuration validated successfully")
     def _setup_logger(self) -> logging.Logger:
         """Setup structured logging with proper formatting"""
         logger = logging.getLogger(f"migration_manager_{id(self)}")
@@ -199,17 +203,22 @@ class MigrationManager:
                 conn.execute(text("SELECT 1"))
         except Exception as e:
             raise MigrationError(
-                "Failed to connect to database",
+                f"Failed to connect to database: {e}",
                 context={"database_url": self.sync_database_url},
                 original_error=e
             )
     
     def _convert_to_sync_url(self, async_url: str) -> str:
-        """Convert async database URL to sync URL using proper URL parsing"""
+        """Convert async database URL to sync URL using proper URL parsing
+        
+        Preserves authentication credentials during the conversion.
+        """
         try:
-            from sqlalchemy.engine.url import make_url
+            from sqlalchemy.engine.url import make_url, URL
             
+            # Parse the original URL
             url = make_url(async_url)
+            
             
             # Driver mappings
             driver_mappings = {
@@ -218,10 +227,20 @@ class MigrationManager:
                 'sqlite+aiosqlite': 'sqlite',
             }
             
-            if url.drivername in driver_mappings:
-                url = url.set(drivername=driver_mappings[url.drivername])
+            # Create a new URL with the same components but potentially different driver
+            sync_url = URL.create(
+                drivername=driver_mappings.get(url.drivername, url.drivername),
+                username=url.username,
+                password=url.password,
+                host=url.host,
+                port=url.port,
+                database=url.database,
+                query=url.query
+            )
             
-            return str(url)
+            self.logger.debug(f"Converted database URL: {sync_url}")
+            
+            return (sync_url)
             
         except Exception as e:
             self.logger.error(f"Failed to convert database URL: {e}")

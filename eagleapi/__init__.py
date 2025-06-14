@@ -19,6 +19,7 @@ from .utils.routes import router as utils_router
 from .migrations import MigrationManager
 from .core.config import settings
 import asyncio
+from .middleware.timming import TimmingMiddleware
 
 # Initialize module-level logger; logging configuration is handled in `create_app`
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ class EagleAPI(FastAPI):
 
         admin_app = AdminApp()
         self.include_router(admin_app.router,include_in_schema=False)
-  
+        self.add_middleware(TimmingMiddleware)
     async def on_startup(self):
         """Handle application startup with migrations."""
         self.logger.info("Starting up Eagle application...")
@@ -62,7 +63,7 @@ class EagleAPI(FastAPI):
             await asyncio.to_thread(self._run_migrations)
             
             # Create superuser
-            #await self._create_initial_superuser()
+            await self._create_initial_superuser()
             
         except Exception as e:
             self.logger.error(f"Error during startup: {e}")
@@ -103,6 +104,8 @@ class EagleAPI(FastAPI):
                 database_url=str(settings.DATABASE_URL),
                 environment="development" if debug else "production",
             )
+
+            logger.info("Migration config created", extra={"config": migration_config})
 
             # Initialize migration manager
             migration_manager = MigrationManager(

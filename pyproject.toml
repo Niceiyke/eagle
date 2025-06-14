@@ -35,6 +35,8 @@ dependencies = [
     "pytz>=2025.2",
     "pyotp>=2.9.0",
     "qrcode>=7.4.2",
+    "asyncpg>=0.30.0",
+    "psycopg2-binary>=2.9.10",
 ]
 
 [project.optional-dependencies]
