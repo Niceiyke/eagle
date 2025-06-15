@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     ECHO_SQL: bool = False  # EAGLE_ECHO_SQL
 
     # --- Security & Auth ---
-    SECRET_KEY: str = "your-secret-key-change-this-in-production"
+    SECRET_KEY: str = "your-secret-key-change-this-in-production!"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # JWT access token expiry (minutes)
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30  # JWT refresh token expiry (days)
     EMAIL_VERIFICATION_EXPIRE_HOURS: int = 24
@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     # --- Superuser (initial setup) ---
     SUPERUSER_EMAIL: str = "superuser@example.com"
     SUPERUSER_PASSWORD: str = "superuser-password"
+
+    # --- Server ---
+    HOST: str = "127.0.0.1"
+    PORT: int = 8000
+    DOCS_ENABLED: bool = True
+    RELOAD: bool = False
+    WORKERS: int = 1
+
+    ENV: str = "development"
 
     # --- CORS ---
     CORS_ORIGINS: List[str] = ["*"]

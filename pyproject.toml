@@ -20,13 +20,10 @@ dependencies = [
     "pydantic[email]>=1.8.0",
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
+    "typer>=0.9.0",
+    "rich>=13.0.0",
     "python-multipart>=0.0.5",
-    "typer>=0.4.0",
-    "rich>=10.0.0",
     "httpx>=0.19.0",
-    "pytest>=6.0.0",
-    "pytest-asyncio>=0.15.0",
-    "pytest-cov>=2.0.0",
     "aiosqlite>=0.20.0",
     "jinja2>=3.1.6",
     "redis>=6.1.0",
@@ -41,15 +38,21 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pytest>=6.0.0",
+    "pytest-asyncio>=0.15.0",
+    "pytest-cov>=2.0.0",
     "black>=21.0",
     "isort>=5.0.0",
     "mypy>=0.910",
 ]
 
+[project.scripts]
+eagle = "eagleapi.cli:app"
+
 [tool.black]
 line-length = 88
-target-version = ['py38']
-include = '\.pyi?$'
+target-version = ["py38"]
+include = '\\.pyi?$'
 
 [tool.isort]
 profile = "black"
@@ -57,9 +60,7 @@ line_length = 88
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = "test_*.py"
+python_files = ["test_*.py"]
 python_functions = "test_*"
+asyncio_mode = "auto"
 addopts = "-v --cov=eagle --cov-report=term-missing"
-
-[project.scripts]
-eagle = "eagle.cli.main:app"

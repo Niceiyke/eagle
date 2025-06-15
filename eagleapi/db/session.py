@@ -75,7 +75,7 @@ class Database:
                 expire_on_commit=False,
                 class_=AsyncSession
             )
-            self._logger.info("Database engine initialized successfully")
+            self._logger.debug("Database engine initialized successfully")
         except Exception as e:
             self._logger.error(f"Failed to initialize database engine: {e}")
             raise ConnectionError(
@@ -133,7 +133,7 @@ class Database:
         """Close all database connections."""
         if self.engine:
             await self.engine.dispose()
-            self._logger.info("Database connections closed")
+            self._logger.debug("Database connections closed")
 
 # Global database instance
 db = Database()

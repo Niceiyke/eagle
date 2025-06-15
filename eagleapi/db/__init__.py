@@ -174,7 +174,7 @@ class Database:
         """Enhanced engine setup with validation and comprehensive error handling"""
         try:
             self._validate_database_url(self.database_url)
-            self._logger.info(f"Initializing database connection to {self.database_url}")
+            self._logger.debug(f"Initializing database connection to {self.database_url}")
             
             connect_args: Dict[str, Any] = {}
             if "sqlite" in self.database_url:
@@ -203,7 +203,7 @@ class Database:
                 autoflush=False
             )
             
-            self._logger.info("Database connection pool initialized successfully")
+            self._logger.debug("Database connection pool initialized successfully")
             
         except Exception as e:
             self._logger.error(f"Failed to initialize database: {e}", exc_info=True)

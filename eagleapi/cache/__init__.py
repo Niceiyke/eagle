@@ -318,7 +318,7 @@ class CacheManager:
                 logger.warning(f"Redis backend unavailable, falling back to in-memory: {e}")
         
         # Fallback to in-memory (development)
-        logger.info("Using in-memory cache backend")
+        logger.debug("Using in-memory cache backend")
         return InMemoryCache(default_ttl=self.default_ttl)
     
     @property
